@@ -9,5 +9,12 @@ jobs:
           echo "Cek KVM:"
           ls -l /dev/kvm || echo "/dev/kvm TIDAK ADA"
           echo ""
+
           echo "Cek nested virtualization:"
-          cat /sys/module/kvm_intel/parameters/nested || echo "Gak bisa dicek"
+          if [ -f /sys/module/kvm_intel/parameters/nested ]; then
+            cat /sys/module/kvm_intel/parameters/nested
+          elif [ -f /sys/module/kvm_amd/parameters/nested ]; then
+            cat /sys/module/kvm_amd/parameters/nested
+          else
+            echo "Nested virtualization tidak terdeteksi"
+          fi
