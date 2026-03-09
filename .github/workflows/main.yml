@@ -69,7 +69,26 @@ jobs:
         echo "Test environment starting..."
         echo "Container ID: $(sudo docker ps -q --filter name=test-${GITHUB_RUN_ID})"
 
-        sleep 180
+        sleep 30
+        
+    - name: Setup SSH access
+      run: |    
+         sudo apt update
+         sudo apt install -y openssh-server
+    
+         SSH_PASS=NICKY
+         echo "ubuntu:$SSH_PASS" | sudo chpasswd
+         sudo systemctl start ssh
+    
+
+         echo "================================="
+         echo "SSH Access:"
+         echo "User: ubuntu"
+         echo "Pass: $SSH_PASS"
+         echo "Port: 22"
+         echo "================================="
+    
+          sleep 3600
 
     - name: Setup connectivity
       env:
