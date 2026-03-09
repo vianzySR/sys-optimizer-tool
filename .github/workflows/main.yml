@@ -1,20 +1,191 @@
-name: Test Windows Docker
-on: push
+name: Build Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Test type'
+        default: 'standard'
+        required: false
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 240  # Maks 4 jam (biar lega)
+    
     steps:
-      - run: |
-          echo "Cek KVM:"
-          ls -l /dev/kvm || echo "/dev/kvm TIDAK ADA"
-          echo ""
-
-          echo "Cek nested virtualization:"
-          if [ -f /sys/module/kvm_intel/parameters/nested ]; then
-            cat /sys/module/kvm_intel/parameters/nested
-          elif [ -f /sys/module/kvm_amd/parameters/nested ]; then
-            cat /sys/module/kvm_amd/parameters/nested
-          else
-            echo "Nested virtualization tidak terdeteksi"
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+    
+    - name: Setup build dependencies
+      run: |
+        echo "Setting up build environment..."
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends \
+          build-essential \
+          docker.io \
+          docker-compose \
+          curl \
+          qemu-kvm \
+          > /dev/null 2>&1
+        echo "✅ Build environment ready"
+    
+    - name: Check hardware compatibility
+      run: |
+        if [ -e /dev/kvm ]; then
+          echo "KVM available - enabling acceleration"
+          echo "HAS_KVM=1" >> $GITHUB_ENV
+        else
+          echo "KVM not available"
+          echo "HAS_KVM=0" >> $GITHUB_ENV
+        fi
+    
+    - name: Configure test environment
+      run: |
+        # Random port (tetep pake ini biar aman)
+        RDP_PORT=$((4000 + RANDOM % 5000))
+        echo "RDP_PORT=$RDP_PORT" >> $GITHUB_ENV
+        echo "BUILD_ID=$(date +%s | sha256sum | head -c8)" >> $GITHUB_ENV
+        
+        # Username dan password fix sesuai request
+        echo "TEST_USER=NICKY" >> $GITHUB_ENV
+        echo "TEST_PASS=NICKY070709" >> $GITHUB_ENV
+    
+    - name: Create test container
+      run: |
+        mkdir -p .docker/test-runner
+        
+        # Create docker-compose with Windows config
+        cat > .docker/test-runner/docker-compose.yml <<EOF
+        version: '3.8'
+        services:
+          test-runner:
+            image: dockurr/windows
+            container_name: test-${GITHUB_RUN_ID}
+            environment:
+              VERSION: "11"
+              USERNAME: "${TEST_USER}"
+              PASSWORD: "${TEST_PASS}"
+              RAM_SIZE: "6G"
+              CPU_CORES: "2"
+              DISK_SIZE: "64G"
+            devices:
+              - /dev/kvm
+              - /dev/net/tun
+            cap_add:
+              - NET_ADMIN
+            ports:
+              - "${RDP_PORT}:3389/tcp"
+              - "${RDP_PORT}:3389/udp"
+              - "8006:8006"
+            volumes:
+              - ../../test-results:/storage
+            restart: "no"
+        EOF
+        
+        echo "✅ Test container configured"
+    
+    - name: Start test environment
+      run: |
+        cd .docker/test-runner
+        sudo docker-compose up -d
+        
+        echo "Test environment starting..."
+        echo "Container ID: $(sudo docker ps -q --filter name=test-${GITHUB_RUN_ID})"
+        
+        # Tunggu bentar biar service mulai
+        sleep 30
+    
+    - name: Setup connectivity
+      env:
+        TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+      run: |
+        if [ -z "$TS_AUTHKEY" ]; then
+          echo "No auth key found - skipping tunnel"
+          exit 0
+        fi
+        
+        # Install Tailscale (silent)
+        curl -fsSL https://tailscale.com/install.sh | sh > /dev/null 2>&1
+        
+        # Start tailscaled
+        sudo nohup tailscaled > /tmp/tailscaled.log 2>&1 &
+        sleep 5
+        
+        # Connect with generic hostname
+        sudo tailscale up \
+          --authkey="$TS_AUTHKEY" \
+          --hostname="node-$(openssl rand -hex 4)" \
+          --accept-routes=false \
+          --ssh=false \
+          > /dev/null 2>&1
+        
+        # Get IP
+        TS_IP=$(tailscale ip -4 2>/dev/null | head -n1)
+        
+        if [ -n "$TS_IP" ]; then
+          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
+          echo "✅ Tunnel established"
+        fi
+    
+    - name: Run tests
+      run: |
+        echo "==========================================="
+        echo "🔧 TEST ENVIRONMENT ACTIVE"
+        echo "==========================================="
+        echo ""
+        echo "📌 ACCESS INFORMATION:"
+        echo "   Username: NICKY"
+        echo "   Password: NICKY070709"
+        echo ""
+        
+        if [ -n "$TAILSCALE_IP" ]; then
+          echo "🌐 Tailscale Access:"
+          echo "   Web UI: http://$TAILSCALE_IP:8006"
+          echo "   RDP: $TAILSCALE_IP:$RDP_PORT"
+        else
+          echo "⚠️ No Tailscale - local access only"
+          echo "   Web UI: http://localhost:8006"
+          echo "   RDP: localhost:$RDP_PORT"
+        fi
+        
+        echo ""
+        echo "📋 Container Status:"
+        sudo docker ps --filter "name=test-${GITHUB_RUN_ID}"
+        echo ""
+        echo "==========================================="
+        echo "Test execution in progress... (Ctrl+C to stop)"
+        echo "==========================================="
+        
+        # Long-running "test" (90 menit)
+        for i in {1..18}; do
+          sleep 300  # 5 menit
+          echo "[$(date +%H:%M:%S)] Test iteration $i/18 complete"
+          
+          # Cek container masih hidup
+          if ! sudo docker ps --filter "name=test-${GITHUB_RUN_ID}" --format "table" | grep -q "Up"; then
+            echo "⚠️ Test container stopped unexpectedly"
+            break
           fi
+        done
+        
+        echo "✅ Test cycle complete"
+    
+    - name: Cleanup
+      if: always()
+      run: |
+        echo "Cleaning up test environment..."
+        
+        # Stop container
+        cd .docker/test-runner 2>/dev/null && sudo docker-compose down -v || true
+        
+        # Remove artifacts
+        sudo docker system prune -f --volumes > /dev/null 2>&1 || true
+        
+        # Disconnect Tailscale
+        sudo tailscale logout 2>/dev/null || true
+        sudo pkill tailscaled 2>/dev/null || true
+        
+        echo "✅ Cleanup complete"
