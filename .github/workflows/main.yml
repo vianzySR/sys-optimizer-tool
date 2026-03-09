@@ -19,29 +19,6 @@ jobs:
       with:
         fetch-depth: 1
     
-    - name: Setup build dependencies
-      run: |
-        echo "Setting up build environment..."
-        sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends \
-          build-essential \
-          docker.io \
-          docker-compose \
-          curl \
-          qemu-kvm \
-          > /dev/null 2>&1
-        echo "✅ Build environment ready"
-    
-    - name: Check hardware compatibility
-      run: |
-        if [ -e /dev/kvm ]; then
-          echo "KVM available - enabling acceleration"
-          echo "HAS_KVM=1" >> $GITHUB_ENV
-        else
-          echo "KVM not available"
-          echo "HAS_KVM=0" >> $GITHUB_ENV
-        fi
-    
     - name: Configure test environment
       run: |
         # Random port (tetep pake ini biar aman)
