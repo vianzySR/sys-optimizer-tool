@@ -47,8 +47,7 @@ jobs:
               PASSWORD: "${TEST_PASS}"
               RAM_SIZE: "14G"
               CPU_CORES: "4"
-              DISK_SIZE: "64G"
-              ACTIVATE: "true"
+              DISK_SIZE: "64G"              
             devices:
               - /dev/kvm
               - /dev/net/tun
