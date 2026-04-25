@@ -1,4 +1,4 @@
-name: Kali QEMU Tailscale
+name: Kali QEMU Pinggy
 
 on:
   workflow_dispatch:
@@ -15,26 +15,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt update
-          sudo apt install -y curl net-tools
-
-      - name: Install Tailscale
-        env:
-          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
-        run: |
-          curl -fsSL https://tailscale.com/install.sh | sh
-
-          sudo systemctl enable --now tailscaled
-          sleep 5
-
-          sudo tailscale up \
-            --authkey="$TS_AUTHKEY" \
-            --hostname="kali-qemu-${GITHUB_RUN_ID}" \
-            --accept-routes
-
-          TS_IP=$(tailscale ip -4 | head -n1)
-          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
-
-          echo "Tailscale IP: $TS_IP"
+          sudo apt install -y curl net-tools openssh-client
 
       - name: Create compose file
         run: |
@@ -77,7 +58,7 @@ jobs:
 
       - name: Wait for Web UI
         run: |
-          echo "Waiting for port 8006..."
+          echo "Waiting for QEMU Web UI on port 8006..."
 
           for i in {1..120}; do
             if curl -s http://127.0.0.1:8006 >/dev/null; then
@@ -86,7 +67,6 @@ jobs:
             fi
 
             echo "Waiting $i..."
-            sudo docker ps -a
             sudo docker logs qemu --tail 30 || true
             sleep 5
           done
@@ -97,18 +77,27 @@ jobs:
           echo "Local test:"
           curl -I http://127.0.0.1:8006 || true
 
-          echo "Tailnet test:"
-          curl -I http://$TAILSCALE_IP:8006 || true
-
-      - name: Access info
+      - name: Start Pinggy tunnel
         run: |
-          echo "================================"
-          echo "OPEN:"
-          echo "http://$TAILSCALE_IP:8006"
-          echo ""
-          echo "If browser still refused, check logs above."
-          echo "================================"
+          echo "Starting Pinggy tunnel..."
+          echo "Command:"
+          echo "ssh -p 443 -R0:127.0.0.1:8006 qr@free.pinggy.io"
 
+          ssh -p 443 \
+            -o StrictHostKeyChecking=no \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=3 \
+            -R0:127.0.0.1:8006 \
+            qr@free.pinggy.io | tee pinggy.log &
+
+          sleep 15
+
+          echo "======================================"
+          echo "PINGGY LOG:"
+          cat pinggy.log || true
+          echo "======================================"
+
+          echo "Tunnel aktif. Cek link di log atas."
           sleep 14400
 
       - name: Cleanup
@@ -117,4 +106,3 @@ jobs:
           sudo docker compose down -v || true
           sudo docker rm -f qemu || true
           sudo docker system prune -f --volumes || true
-          sudo tailscale logout || true
