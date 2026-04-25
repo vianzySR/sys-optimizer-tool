@@ -1,51 +1,17 @@
-name: Android ISO QEMU
+name: Kali QEMU
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  android:
+  kali:
     runs-on: ubuntu-24.04
     timeout-minutes: 240
 
     steps:
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y qemu-system-x86 qemu-utils tigervnc-standalone-server novnc websockify wget
-
-      - name: Download Android ISO
-        run: |
-          wget "https://archive.org/download/android-x-86-11-r-arm-x86-64-iso/Android-x86%2011-R%202022-05-04%20%28x86_64%29%20K5.4.40-M21-arm-noGapps-by-Xigo.iso" -O android.iso
-
-      - name: Create disk
-        run: |
-          qemu-img create -f qcow2 android.qcow2 16G
-
-      - name: Start VNC server
-        run: |
-          mkdir -p ~/.vnc
-          echo "NICKY070709" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
-
-          vncserver :1 -geometry 1280x720 -depth 24
-
-          websockify --web=/usr/share/novnc/ 6080 localhost:5901 > /tmp/novnc.log 2>&1 &
-
-      - name: Run Android ISO (QEMU)
-        run: |
-          export DISPLAY=:1
-
-          qemu-system-x86_64 \
-            -m 4096 \
-            -smp 2 \
-            -cdrom android.iso \
-            -drive file=android.qcow2,format=qcow2 \
-            -boot d \
-            -vga std \
-            -no-reboot \
-            > /tmp/qemu.log 2>&1 &
-
       - name: Install Tailscale
         env:
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
@@ -53,28 +19,62 @@ jobs:
           curl -fsSL https://tailscale.com/install.sh | sh
           sudo nohup tailscaled > /tmp/tailscaled.log 2>&1 &
           sleep 5
-          sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="android-iso-${GITHUB_RUN_ID}"
 
-          TS_IP=$(tailscale ip -4 | head -n1)
-          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
+          sudo tailscale up \
+            --authkey="$TS_AUTHKEY" \
+            --hostname="kali-qemu-${GITHUB_RUN_ID}"
+
+          echo "TAILSCALE_IP=$(tailscale ip -4 | head -n1)" >> $GITHUB_ENV
+
+      - name: Create compose file
+        run: |
+          mkdir -p qemu
+
+          cat > docker-compose.yml <<EOF
+          services:
+            qemu:
+              image: qemux/qemu
+              container_name: qemu
+              environment:
+                BOOT: "kali"
+                RAM_SIZE: "4G"
+                CPU_CORES: "2"
+                DISK_SIZE: "32G"
+              devices:
+                - /dev/kvm
+                - /dev/net/tun
+              cap_add:
+                - NET_ADMIN
+              ports:
+                - 8006:8006
+              volumes:
+                - ./qemu:/storage
+              restart: "no"
+              stop_grace_period: 2m
+          EOF
+
+      - name: Start Kali QEMU
+        run: |
+          sudo docker compose up -d
+          sudo docker ps
 
       - name: Access info
         run: |
-          echo "==============================="
-          echo "noVNC:"
-          echo "http://$TAILSCALE_IP:6080/vnc.html"
+          echo "================================"
+          echo "KALI QEMU READY"
           echo ""
-          echo "VNC:"
-          echo "$TAILSCALE_IP:5901"
-          echo "Password: NICKY070709"
-          echo "==============================="
+          echo "Web UI:"
+          echo "http://$TAILSCALE_IP:8006"
+          echo ""
+          echo "Duration: 4 hours"
+          echo "================================"
 
-          echo "Running 4 hours..."
           sleep 14400
 
       - name: Cleanup
         if: always()
         run: |
-          vncserver -kill :1 || true
+          sudo docker compose down -v || true
+          sudo docker system prune -f --volumes || true
           sudo tailscale logout || true
           sudo pkill tailscaled || true
