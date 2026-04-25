@@ -1,4 +1,4 @@
-name: Kali QEMU
+name: Kali QEMU Tailscale
 
 on:
   workflow_dispatch:
@@ -12,23 +12,43 @@ jobs:
     timeout-minutes: 240
 
     steps:
+      - name: Install tools
+        run: |
+          sudo apt update
+          sudo apt install -y curl net-tools
+
       - name: Install Tailscale
         env:
           TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
-          sudo nohup tailscaled > /tmp/tailscaled.log 2>&1 &
+
+          sudo nohup tailscaled \
+            --tun=userspace-networking \
+            --socks5-server=localhost:1055 \
+            > /tmp/tailscaled.log 2>&1 &
+
           sleep 5
 
           sudo tailscale up \
             --authkey="$TS_AUTHKEY" \
-            --hostname="kali-qemu-${GITHUB_RUN_ID}"
+            --hostname="kali-qemu-${GITHUB_RUN_ID}" \
+            --accept-routes
 
-          echo "TAILSCALE_IP=$(tailscale ip -4 | head -n1)" >> $GITHUB_ENV
+          TS_IP=$(tailscale ip -4 | head -n1)
+          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
+
+          echo "Tailscale IP: $TS_IP"
 
       - name: Create compose file
         run: |
           mkdir -p qemu
+
+          if [ -e /dev/kvm ]; then
+            KVM_DEVICE="- /dev/kvm"
+          else
+            KVM_DEVICE=""
+          fi
 
           cat > docker-compose.yml <<EOF
           services:
@@ -41,33 +61,59 @@ jobs:
                 CPU_CORES: "2"
                 DISK_SIZE: "32G"
               devices:
-                - /dev/kvm
+                ${KVM_DEVICE}
                 - /dev/net/tun
               cap_add:
                 - NET_ADMIN
               ports:
-                - 8006:8006
+                - "0.0.0.0:8006:8006"
               volumes:
                 - ./qemu:/storage
               restart: "no"
               stop_grace_period: 2m
           EOF
 
+          cat docker-compose.yml
+
       - name: Start Kali QEMU
         run: |
           sudo docker compose up -d
-          sudo docker ps
+          sudo docker ps -a
+
+      - name: Wait for port 8006
+        run: |
+          echo "Waiting for QEMU Web UI..."
+
+          for i in {1..120}; do
+            if curl -s http://127.0.0.1:8006 >/dev/null; then
+              echo "Port 8006 is ready"
+              break
+            fi
+
+            echo "Waiting... $i"
+            sudo docker ps -a
+            sleep 5
+          done
+
+          echo "Listening ports:"
+          sudo netstat -tulpn | grep 8006 || true
+
+          echo "QEMU logs:"
+          sudo docker logs qemu --tail 80 || true
 
       - name: Access info
         run: |
-          echo "================================"
+          echo "======================================"
           echo "KALI QEMU READY"
           echo ""
-          echo "Web UI:"
+          echo "Open this:"
           echo "http://$TAILSCALE_IP:8006"
           echo ""
-          echo "Duration: 4 hours"
-          echo "================================"
+          echo "Tailscale IP:"
+          echo "$TAILSCALE_IP"
+          echo ""
+          echo "Active for 4 hours"
+          echo "======================================"
 
           sleep 14400
 
