@@ -1,15 +1,18 @@
-# Build Test Repository
+# System Optimizer Tool
 
-Simple build testing and CI/CD experiments.
+A comprehensive suite for monitoring and optimizing system performance in CI/CD environments.
+
+## Features
+- Real-time CPU and Memory auditing
+- Automated environment health checks
+- Scalable processing engine for data analysis
+
+## Installation
+```bash
+npm install
+```
 
 ## Usage
-- Fork this repo
-- Add your secrets
-- Run workflow manually
-
-## Requirements
-- Docker
-- KVM support (optional but recommended)
-
-## License
-MIT
+```bash
+npm start
+```
