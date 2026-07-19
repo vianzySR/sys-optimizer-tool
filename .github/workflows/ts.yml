@@ -1,0 +1,54 @@
+name: Tailscale
+
+on:
+  workflow_dispatch:
+
+jobs:
+  tailscale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Connect to Tailscale
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+        run: |
+          sudo tailscale up \
+            --auth-key="${TS_AUTHKEY}" \
+            --ssh \
+            --hostname="github-runner"
+
+      - name: Create user
+        run: |
+          if ! id nicky >/dev/null 2>&1; then
+            sudo useradd -m -s /bin/bash nicky
+          fi
+
+          echo "nicky:nicky" | sudo chpasswd
+
+          sudo usermod -aG sudo nicky
+
+          echo "nicky ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/nicky
+          sudo chmod 440 /etc/sudoers.d/nicky
+
+      - name: Enable Password SSH
+        run: |
+          sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+          sudo systemctl restart ssh || sudo systemctl restart sshd
+
+      - name: Show Tailscale IP
+        run: |
+          tailscale ip -4
+          tailscale status
+
+      - name: Keep Runner Alive
+        run: |
+          echo "Runner aktif. Tekan Cancel workflow untuk menghentikan."
+          while true; do
+            sleep 60
+          done
