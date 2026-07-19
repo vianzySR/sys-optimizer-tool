@@ -1,0 +1,71 @@
+name: kali
+
+on:
+  workflow_dispatch:
+
+jobs:
+  vm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            qemu-kvm \
+            libvirt-daemon-system \
+            libvirt-clients \
+            virtinst \
+            libguestfs-tools \
+            p7zip-full \
+            sshpass \
+            novnc \
+            websockify \
+            socat \
+            wget \
+            curl \
+            openssl
+
+          sudo systemctl enable --now libvirtd
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Login Tailscale
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+        run: |
+          sudo tailscale up \
+            --auth-key="$TS_AUTHKEY" \
+            --ssh \
+            --hostname=github-vm
+
+      - name: Make Script Executable
+        run: |
+          chmod +x kali.sh
+
+      - name: Run Script
+        run: |
+          sudo ./kali-vm.sh
+
+      - name: Show Information
+        run: |
+          echo "================================"
+          echo "Tailscale IP:"
+          sudo tailscale ip -4 || true
+          echo "================================"
+          echo "SSH : <tailscale-ip>:23"
+          echo "RDP : <tailscale-ip>:3380"
+          echo "VNC : http://<tailscale-ip>:6080/vnc.html"
+          echo "================================"
+
+      - name: Keep Runner Alive
+        run: |
+          while true; do
+            sleep 60
+          done
