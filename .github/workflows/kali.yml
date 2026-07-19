@@ -47,7 +47,7 @@ jobs:
 
       - name: Make Script Executable
         run: |
-          chmod +x kali.sh
+          chmod +x kali-vm.sh
 
       - name: Run Script
         run: |
