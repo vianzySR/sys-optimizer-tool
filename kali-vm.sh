@@ -181,6 +181,16 @@ wait_vm_ready() {
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
         -p 22 user@"$ip" "echo 'user' | sudo -S systemctl enable --now xrdp 2>&1" || true
     log "$name xrdp ready"
+
+    log "Installing Node.js, npm, and opencode-ai on $name..."
+    sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+        -p 22 user@"$ip" "echo 'user' | sudo -S apt-get install -y -qq npm nodejs 2>&1 | tail -5" || true
+    
+    log "Installing opencode-ai globally via npm..."
+    sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+        -p 22 user@"$ip" "npm config set strict-ssl false && npm install -g opencode-ai 2>&1 | tail -10" || true
+    
+    log "$name Node.js, npm, and opencode-ai installed"
 }
 
 get_vm_ip() {
@@ -263,10 +273,17 @@ main() {
     log "  SSH:  ssh -p $SSH_PORT user@$ts  (password: user)"
     log "  RDP:  $ts:3380 ($VM_NAME)"
     log "  VNC:  http://$ts:6080/vnc.html ($VM_NAME)"
-    log "  Credentials: user:user / root:kali"
+    log "========================================"
+    log "Installed packages:"
+    log "  - Node.js"
+    log "  - npm"
+    log "  - opencode-ai (global)"
     log "========================================"
     log "SSH Command:"
     log "  ssh -p $SSH_PORT user@$ts"
+    log "========================================"
+    log "To test opencode-ai after login:"
+    log "  opencode --help"
     log "========================================"
 }
 
