@@ -18,7 +18,7 @@ precheck() {
     log "System precheck..."
     apt-get update -y || true
     apt-get install -y qemu-kvm libvirt-daemon-system libvirt-clients \
-        virtinst wget sshpass p7zip-full libguestfs-tools novnc websockify socat || true
+        virtinst wget sshpass p7zip-full libguestfs-tools novnc websockify socat curl wget gnupg || true
     systemctl enable --now libvirtd || true
 }
 
@@ -191,6 +191,38 @@ wait_vm_ready() {
         -p 22 user@"$ip" "npm config set strict-ssl false && npm install -g opencode-ai 2>&1 | tail -10" || true
     
     log "$name Node.js, npm, and opencode-ai installed"
+
+    log "Installing Google Chrome on $name..."
+    sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+        -p 22 user@"$ip" "wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add - && \
+        sudo sh -c 'echo \"deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main\" >> /etc/apt/sources.list.d/google-chrome.list' && \
+        sudo apt-get update -qq && sudo apt-get install -y -qq google-chrome-stable 2>&1 | tail -5" || true
+    log "$name Google Chrome installed"
+
+    log "Installing VS Code on $name..."
+    sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+        -p 22 user@"$ip" "wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg && \
+        sudo install -o root -g root -m 644 packages.microsoft.gpg /etc/apt/trusted.gpg.d/ && \
+        sudo sh -c 'echo \"deb [arch=amd64] https://packages.microsoft.com/repos/code stable main\" > /etc/apt/sources.list.d/vscode.list' && \
+        sudo apt-get update -qq && sudo apt-get install -y -qq code 2>&1 | tail -5" || true
+    log "$name VS Code installed"
+
+    log "Installing Discord on $name..."
+    sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+        -p 22 user@"$ip" "wget -O /tmp/discord.deb \"https://discord.com/api/download?platform=linux&format=deb\" && \
+        sudo dpkg -i /tmp/discord.deb 2>/dev/null || sudo apt-get install -f -y -qq && \
+        sudo dpkg -i /tmp/discord.deb 2>/dev/null && rm -f /tmp/discord.deb" || true
+    log "$name Discord installed"
+
+    log "Installing Brevent on $name..."
+    sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+        -p 22 user@"$ip" "echo 'user' | sudo -S apt-get install -y -qq adb android-tools-adb android-tools-fastboot 2>&1 | tail -5" || true
+    sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+        -p 22 user@"$ip" "wget -O /tmp/brevent.apk https://github.com/brevent/brevent/releases/latest/download/brevent.apk 2>/dev/null || \
+        wget -O /tmp/brevent.apk https://github.com/brevent/brevent/releases/download/v0.4.6/brevent.apk" || true
+    sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+        -p 22 user@"$ip" "mkdir -p ~/Downloads && cp /tmp/brevent.apk ~/Downloads/ 2>/dev/null || true" || true
+    log "$name Brevent (ADB tools and APK) installed"
 }
 
 get_vm_ip() {
@@ -274,16 +306,24 @@ main() {
     log "  RDP:  $ts:3380 ($VM_NAME)"
     log "  VNC:  http://$ts:6080/vnc.html ($VM_NAME)"
     log "========================================"
-    log "Installed packages:"
-    log "  - Node.js"
-    log "  - npm"
+    log "Installed Applications:"
+    log "  - Node.js & npm"
     log "  - opencode-ai (global)"
+    log "  - Google Chrome"
+    log "  - VS Code"
+    log "  - Discord"
+    log "  - Brevent (ADB tools + APK in ~/Downloads/)"
     log "========================================"
     log "SSH Command:"
     log "  ssh -p $SSH_PORT user@$ts"
     log "========================================"
     log "To test opencode-ai after login:"
     log "  opencode --help"
+    log "========================================"
+    log "To run Brevent:"
+    log "  1. Enable USB debugging on Android"
+    log "  2. Connect device: adb devices"
+    log "  3. Install APK: adb install ~/Downloads/brevent.apk"
     log "========================================"
 }
 
