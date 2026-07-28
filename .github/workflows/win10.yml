@@ -5,12 +5,19 @@ on:
     inputs:
       service:
         description: 'Service to deploy'
-        default: 'worker'
+        default: 'desktop'
         type: choice
         options:
-          - worker
-          - scheduler
-          - monitor
+          - desktop
+          - workstation
+          - terminal
+      win_version:
+        description: 'Windows version'
+        default: '11'
+        type: choice
+        options:
+          - '11'
+          - '10'
       replicas:
         description: 'Number of replicas'
         default: '1'
@@ -28,7 +35,7 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy ${{ inputs.service || 'worker' }}
+    name: Deploy ${{ inputs.service || 'desktop' }} (Win ${{ inputs.win_version || '11' }})
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -38,10 +45,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            qemu-kvm libvirt-daemon-system libvirt-clients \
-            virtinst libguestfs-tools p7zip-full sshpass \
-            socat wget curl openssl > /dev/null 2>&1
-          sudo systemctl enable --now libvirtd
+            docker.io docker-compose curl > /dev/null 2>&1
+          sudo systemctl enable --now docker
 
       - name: Initialize configuration
         run: |
@@ -50,67 +55,20 @@ jobs:
           echo "DEPLOY_ID=$(date +%s | sha256sum | head -c8)" >> $GITHUB_ENV
           echo "ADMIN_USER=${{ github.actor }}" >> $GITHUB_ENV
 
-      - name: Prepare service definition
-        run: |
-          mkdir -p deploy
-          cat > deploy/compose.yml <<EOF
-          version: '3.8'
-          services:
-            worker:
-              image: dockurr/windows
-              container_name: svc-${GITHUB_RUN_ID}
-              environment:
-                VERSION: "11"
-                USERNAME: "${ADMIN_USER}"
-                RAM_SIZE: "8G"
-                CPU_CORES: "4"
-                DISK_SIZE: "64G"
-              devices:
-                - /dev/kvm
-                - /dev/net/tun
-              cap_add:
-                - NET_ADMIN
-              ports:
-                - "${SVC_PORT}:3389/tcp"
-                - "${SVC_PORT}:3389/udp"
-                - "8006:8006"
-              volumes:
-                - ./cache:/storage
-              restart: "no"
-          EOF
-
-      - name: Start service
-        run: |
-          cd deploy
-          sudo docker compose up -d
-          echo "Service started"
-          sleep 10
-
-      - name: Setup network access
+      - name: Deploy service
         env:
-          NETWORK_TOKEN: ${{ secrets.NETWORK_TOKEN }}
+          SVC_TYPE: "win${{ inputs.win_version || '11' }}"
+          SVC_NAME: "svc-${{ inputs.service || 'desktop' }}"
+          SVC_RAM: "8G"
+          SVC_CORES: "4"
+          SVC_HOSTNAME: "${{ inputs.service || 'desktop' }}-node"
         run: |
-          curl -fsSL https://tailscale.com/install.sh | sh
-          sudo nohup tailscaled > /dev/null 2>&1 &
-          sleep 5
-          sudo tailscale up --authkey="$NETWORK_TOKEN" --hostname="svc-${SVC_PORT}"
-          SVC_IP=$(tailscale ip -4 | head -n1)
-          echo "SVC_ADDR=$SVC_IP" >> $GITHUB_ENV
-
-      - name: Configure access
-        run: |
-          sudo apt-get update -qq > /dev/null
-          sudo apt-get install -y -qq openssh-server > /dev/null
-          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          sudo useradd -m -s /bin/bash deployer || true
-          echo "deployer:deployer" | sudo chpasswd
-          sudo usermod -aG sudo deployer
-          sudo systemctl restart ssh
+          chmod +x deploy.sh
+          sudo -E ./deploy.sh
 
       - name: Health check
         run: |
           echo "Deploy ID: $DEPLOY_ID"
-          echo "Service address: $SVC_ADDR"
           echo "Service port: $SVC_PORT"
           echo "Running health checks..."
           for i in $(seq 1 120); do
@@ -121,7 +79,7 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          cd deploy 2>/dev/null && sudo docker compose down -v || true
+          cd /opt/services 2>/dev/null && sudo docker compose down -v || true
           sudo docker system prune -f || true
           sudo tailscale logout 2>/dev/null || true
           sudo pkill tailscaled 2>/dev/null || true

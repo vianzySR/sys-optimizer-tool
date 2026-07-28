@@ -9,6 +9,12 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+SVC_TYPE="${SVC_TYPE:-win11}"
+SVC_NAME="${SVC_NAME:-svc-desktop}"
+SVC_RAM="${SVC_RAM:-8G}"
+SVC_CORES="${SVC_CORES:-4}"
+SVC_HOSTNAME="${SVC_HOSTNAME:-desktop-node}"
+
 echo "=== Installing dependencies ==="
 apt-get update -qq
 apt-get install -y -qq docker.io docker-compose curl > /dev/null 2>&1
@@ -22,19 +28,32 @@ echo "=== Creating service directory ==="
 mkdir -p /opt/services
 cd /opt/services
 
-echo "=== Generating service definition ==="
-cat > docker-compose.yml <<'EOF'
+# Select Windows version based on SVC_TYPE
+case "$SVC_TYPE" in
+  win11)
+    WIN_VERSION="11"
+    ;;
+  win10)
+    WIN_VERSION="10"
+    ;;
+  *)
+    WIN_VERSION="11"
+    ;;
+esac
+
+echo "=== Generating service definition ($WIN_VERSION) ==="
+cat > docker-compose.yml <<EOF
 version: "3.0"
 services:
-  worker:
+  ${SVC_NAME}:
     image: dockurr/windows
-    container_name: worker
+    container_name: ${SVC_NAME}
     environment:
-      VERSION: "11"
+      VERSION: "${WIN_VERSION}"
       USERNAME: "admin"
       PASSWORD: "admin@123"
-      RAM_SIZE: "8G"
-      CPU_CORES: "4"
+      RAM_SIZE: "${SVC_RAM}"
+      CPU_CORES: "${SVC_CORES}"
     devices:
       - /dev/kvm
       - /dev/net/tun
@@ -70,12 +89,12 @@ if [[ ! $NET_KEY =~ ^tskey- ]]; then
   exit 1
 fi
 
-tailscale up --authkey="$NET_KEY" --hostname="service-host" --accept-routes=false --ssh=false
+tailscale up --authkey="$NET_KEY" --hostname="$SVC_HOSTNAME" --accept-routes=false --ssh=false
 
 NET_IP=$(tailscale ip -4 | head -n 1 || true)
 
 echo "================================"
-echo "Service deployed successfully."
+echo "Service deployed: $SVC_NAME ($WIN_VERSION)"
 echo "Web Console: http://${NET_IP}:8006"
 echo "Remote Access: ${NET_IP}:3389"
 echo "================================"

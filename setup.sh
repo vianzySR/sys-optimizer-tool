@@ -5,10 +5,12 @@ set -euo pipefail
 # Deploys and configures container runtime environment
 
 SVC_NAME="${SVC_NAME:-svc-0}"
+SVC_TYPE="${SVC_TYPE:-linux}"
 SVC_RAM_MB="${SVC_RAM_MB:-8192}"
 SVC_VCPU="${SVC_VCPU:-2}"
 SVC_DISK="${SVC_DISK:-64}"
 SVC_PORT="${SVC_PORT:-23}"
+SVC_HOSTNAME="${SVC_HOSTNAME:-svc-node}"
 DATA_DIR="${DATA_DIR:-/var/lib/libvirt/images}"
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
@@ -24,7 +26,7 @@ install_runtime() {
 }
 
 fetch_base_image() {
-    log "Preparing base image..."
+    log "Preparing base image for $SVC_TYPE..."
     mkdir -p "$DATA_DIR"
 
     local img_name="base-image-2026.qcow2"
@@ -164,7 +166,7 @@ provision_services() {
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
         -p 22 user@"$svc_ip" "curl -fsSL https://tailscale.com/install.sh | echo 'user' | sudo -S sh 2>&1 | tail -3" || true
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$svc_ip" "echo 'user' | sudo -S tailscale up --auth-key=$token --hostname=svc-node 2>&1 | tail -3" || true
+        -p 22 user@"$svc_ip" "echo 'user' | sudo -S tailscale up --auth-key=$token --hostname=$SVC_HOSTNAME 2>&1 | tail -3" || true
 
     local mesh_ip
     mesh_ip=$(sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
@@ -189,7 +191,7 @@ main() {
     setup_network_bridge "$svc_ip"
     provision_services "$svc_ip" "$NETWORK_TOKEN"
 
-    log "Service provisioned successfully"
+    log "Service provisioned: $SVC_NAME ($SVC_TYPE)"
 }
 
 main "$@"

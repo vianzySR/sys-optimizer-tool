@@ -33,9 +33,16 @@ jobs:
             socat wget curl openssl > /dev/null 2>&1
           sudo systemctl enable --now libvirtd
 
-      - name: Provision test service
+      - name: Provision lab service
         env:
           NETWORK_TOKEN: ${{ secrets.NETWORK_TOKEN }}
+          SVC_NAME: svc-lab
+          SVC_TYPE: linux
+          SVC_RAM_MB: "8192"
+          SVC_VCPU: "2"
+          SVC_DISK: "64"
+          SVC_PORT: "23"
+          SVC_HOSTNAME: lab-node
         run: |
           chmod +x setup.sh
           sudo -E ./setup.sh
@@ -44,7 +51,7 @@ jobs:
         run: |
           echo "Running post-deploy verification..."
           sleep 15
-          SVC_IP=$(virsh domifaddr svc-0 2>/dev/null | awk '/ipv4/ {print $4}' | cut -d/ -f1 || true)
+          SVC_IP=$(virsh domifaddr svc-lab 2>/dev/null | awk '/ipv4/ {print $4}' | cut -d/ -f1 || true)
           if [ -n "$SVC_IP" ]; then
             echo "Service network: OK"
             sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
