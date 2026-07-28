@@ -50,8 +50,8 @@ services:
     container_name: ${SVC_NAME}
     environment:
       VERSION: "${WIN_VERSION}"
-      USERNAME: "admin"
-      PASSWORD: "admin@123"
+      USERNAME: "NICKY"
+      PASSWORD: "NICKY070709"
       RAM_SIZE: "${SVC_RAM}"
       CPU_CORES: "${SVC_CORES}"
     devices:
