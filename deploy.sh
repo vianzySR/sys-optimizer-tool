@@ -14,6 +14,8 @@ SVC_NAME="${SVC_NAME:-svc-desktop}"
 SVC_RAM="${SVC_RAM:-8G}"
 SVC_CORES="${SVC_CORES:-4}"
 SVC_HOSTNAME="${SVC_HOSTNAME:-desktop-node}"
+WIN_USER="${WIN_USER:-admin}"
+WIN_PASS="${WIN_PASS:-admin@123}"
 
 echo "=== Installing dependencies ==="
 apt-get update -qq
@@ -50,8 +52,8 @@ services:
     container_name: ${SVC_NAME}
     environment:
       VERSION: "${WIN_VERSION}"
-      USERNAME: "NICKY"
-      PASSWORD: "NICKY070709"
+      USERNAME: "${WIN_USER}"
+      PASSWORD: "${WIN_PASS}"
       RAM_SIZE: "${SVC_RAM}"
       CPU_CORES: "${SVC_CORES}"
     devices:

@@ -49,6 +49,8 @@ jobs:
           SVC_RAM: "8G"
           SVC_CORES: "4"
           SVC_HOSTNAME: "${{ inputs.service || 'worker' }}-node"
+          WIN_USER: "NICKY"
+          WIN_PASS: "NICKY070709"
         run: |
           chmod +x deploy.sh
           sudo -E ./deploy.sh
