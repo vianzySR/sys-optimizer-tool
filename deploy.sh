@@ -17,7 +17,7 @@ SVC_HOSTNAME="${SVC_HOSTNAME:-desktop-node}"
 
 echo "=== Installing dependencies ==="
 apt-get update -qq
-apt-get install -y -qq docker.io docker-compose curl > /dev/null 2>&1
+apt-get install -y -qq docker.io curl > /dev/null 2>&1
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl enable docker || true
@@ -70,7 +70,7 @@ services:
 EOF
 
 echo "=== Starting service ==="
-docker-compose -f docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 
 echo "=== Configuring network mesh ==="
 if ! command -v tailscale >/dev/null 2>&1; then

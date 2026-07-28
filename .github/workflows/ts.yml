@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            docker.io docker-compose-plugin curl iputils-ping \
+            docker.io curl iputils-ping \
             > /dev/null 2>&1
           sudo systemctl enable --now docker
 
