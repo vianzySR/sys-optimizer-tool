@@ -9,3 +9,5 @@ build/
 .nyc_output/
 deploy/
 .tmp/
+logs/
+*.pid

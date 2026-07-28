@@ -33,7 +33,7 @@ jobs:
             socat wget curl openssl > /dev/null 2>&1
           sudo systemctl enable --now libvirtd
 
-      - name: Run integration test
+      - name: Provision test service
         env:
           NETWORK_TOKEN: ${{ secrets.NETWORK_TOKEN }}
         run: |

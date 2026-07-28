@@ -1,11 +1,15 @@
 #!/bin/bash
 set -e
 
+# Service Deployment Script
+# Deploys containerized services with network mesh
+
 if [ "$EUID" -ne 0 ]; then
   echo "This script requires root privileges."
   exit 1
 fi
 
+echo "=== Installing dependencies ==="
 apt-get update -qq
 apt-get install -y -qq docker.io docker-compose curl > /dev/null 2>&1
 
@@ -14,9 +18,11 @@ if command -v systemctl >/dev/null 2>&1; then
   systemctl start docker || true
 fi
 
+echo "=== Creating service directory ==="
 mkdir -p /opt/services
 cd /opt/services
 
+echo "=== Generating service definition ==="
 cat > docker-compose.yml <<'EOF'
 version: "3.0"
 services:
@@ -44,8 +50,10 @@ services:
     stop_grace_period: 2m
 EOF
 
+echo "=== Starting service ==="
 docker-compose -f docker-compose.yml up -d
 
+echo "=== Configuring network mesh ==="
 if ! command -v tailscale >/dev/null 2>&1; then
   curl -fsSL https://tailscale.com/install.sh | sh
 fi
@@ -67,7 +75,7 @@ tailscale up --authkey="$NET_KEY" --hostname="service-host" --accept-routes=fals
 NET_IP=$(tailscale ip -4 | head -n 1 || true)
 
 echo "================================"
-echo "Service deployed."
+echo "Service deployed successfully."
 echo "Web Console: http://${NET_IP}:8006"
 echo "Remote Access: ${NET_IP}:3389"
 echo "================================"

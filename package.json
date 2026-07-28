@@ -1,35 +1,46 @@
 {
-  "name": "sys-optimizer-tool",
-  "version": "1.2.0",
-  "description": "Container performance monitoring and resource optimization toolkit for Docker-based CI/CD environments",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js",
-    "test": "node index.js --test",
-    "lint": "echo 'lint passed'",
-    "audit": "node index.js --audit",
-    "health": "node index.js --health"
-  },
-  "keywords": [
-    "docker",
-    "container",
-    "monitoring",
-    "optimization",
-    "ci-cd",
-    "devops",
-    "health-check",
-    "resource-management"
-  ],
-  "author": "vianzySR",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/vianzySR/sys-optimizer-tool"
-  },
-  "dependencies": {
-    "axios": "^1.6.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+    "name": "sys-optimizer-tool",
+    "version": "1.2.0",
+    "description": "Container performance monitoring and resource optimization toolkit for Docker-based CI/CD environments",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js",
+        "watch": "node index.js --watch",
+        "test": "node index.js",
+        "lint": "echo 'lint passed'",
+        "audit": "node index.js --audit",
+        "health": "node index.js --health",
+        "docker:build": "docker compose build",
+        "docker:up": "docker compose up -d",
+        "docker:down": "docker compose down",
+        "docker:logs": "docker compose logs -f"
+    },
+    "keywords": [
+        "docker",
+        "container",
+        "monitoring",
+        "optimization",
+        "ci-cd",
+        "devops",
+        "health-check",
+        "resource-management",
+        "performance"
+    ],
+    "author": "vianzySR",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/vianzySR/sys-optimizer-tool"
+    },
+    "homepage": "https://github.com/vianzySR/sys-optimizer-tool#readme",
+    "bugs": {
+        "url": "https://github.com/vianzySR/sys-optimizer-tool/issues"
+    },
+    "dependencies": {
+        "axios": "^1.6.0"
+    },
+    "devDependencies": {},
+    "engines": {
+        "node": ">=18.0.0"
+    }
 }

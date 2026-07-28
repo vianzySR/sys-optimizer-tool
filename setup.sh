@@ -1,106 +1,107 @@
 #!/bin/bash
 set -euo pipefail
 
-SVC_NAME="svc-0"
-SVC_RAM_MB=8192
-SVC_VCPU=2
-SVC_DISK=64
-SSH_PORT=23
-STORAGE_DIR="/var/lib/libvirt/images"
+# Service Provisioner - Environment Setup Script
+# Deploys and configures container runtime environment
 
-IMAGE_NAME="kali-linux-2026.2-qemu-amd64.7z"
-IMAGE_PATH="$STORAGE_DIR/$IMAGE_NAME"
-BASE_IMAGE="$STORAGE_DIR/base.qcow2"
+SVC_NAME="${SVC_NAME:-svc-0}"
+SVC_RAM_MB="${SVC_RAM_MB:-8192}"
+SVC_VCPU="${SVC_VCPU:-2}"
+SVC_DISK="${SVC_DISK:-64}"
+SVC_PORT="${SVC_PORT:-23}"
+DATA_DIR="${DATA_DIR:-/var/lib/libvirt/images}"
 
-precheck() {
+log() { echo "[$(date '+%H:%M:%S')] $*"; }
+
+install_runtime() {
+    log "Installing container runtime dependencies..."
     apt-get update -y || true
-    apt-get install -y qemu-kvm libvirt-daemon-system libvirt-clients \
-        virtinst wget sshpass p7zip-full libguestfs-tools socat curl gnupg || true
+    apt-get install -y -qq \
+        qemu-kvm libvirt-daemon-system libvirt-clients \
+        virtinst libguestfs-tools p7zip-full sshpass \
+        socat wget curl openssl gnupg net-tools > /dev/null 2>&1 || true
     systemctl enable --now libvirtd || true
 }
 
-download_image() {
-    mkdir -p "$STORAGE_DIR"
+fetch_base_image() {
+    log "Preparing base image..."
+    mkdir -p "$DATA_DIR"
 
-    if [ -f "$BASE_IMAGE" ]; then
-        local size
-        size=$(stat -c%s "$BASE_IMAGE" 2>/dev/null || echo 0)
-        if [ "$size" -ge 5000000000 ]; then
-            return
-        fi
-        rm -f "$IMAGE_PATH" "$BASE_IMAGE"
+    local img_name="base-image-2026.qcow2"
+    local img_path="$DATA_DIR/$img_name"
+    local base="$DATA_DIR/base.qcow2"
+
+    if [ -f "$base" ]; then
+        local sz
+        sz=$(stat -c%s "$base" 2>/dev/null || echo 0)
+        [ "$sz" -ge 5000000000 ] && return 0
+        rm -f "$img_path" "$base"
     fi
 
-    if [ ! -f "$IMAGE_PATH" ]; then
-        local URLS=(
-            "https://cdimage.kali.org/current/$IMAGE_NAME"
-            "https://kali.download/base-images/current/$IMAGE_NAME"
+    if [ ! -f "$img_path" ]; then
+        local urls=(
+            "https://cdimage.kali.org/current/kali-linux-2026.2-qemu-amd64.7z"
+            "https://kali.download/base-images/current/kali-linux-2026.2-qemu-amd64.7z"
         )
-        local ok=0
-        for url in "${URLS[@]}"; do
-            if wget -q -O "$IMAGE_PATH" "$url"; then
-                ok=1
-                break
-            fi
+        for url in "${urls[@]}"; do
+            wget -q -O "$img_path" "$url" 2>/dev/null && break
         done
-        [ "$ok" = "0" ] && exit 1
+        [ ! -f "$img_path" ] && { log "Image download failed"; exit 1; }
     fi
 
-    rm -f "$BASE_IMAGE"
-    7z x "$IMAGE_PATH" -o"$STORAGE_DIR" -y >/dev/null 2>&1
-    local extracted
-    extracted=$(find "$STORAGE_DIR" -name "*.qcow2" -type f 2>/dev/null | head -1)
-    [ -z "$extracted" ] && exit 1
-    mv "$extracted" "$BASE_IMAGE"
+    rm -f "$base"
+    7z x "$img_path" -o"$DATA_DIR" -y >/dev/null 2>&1
+    local found
+    found=$(find "$DATA_DIR" -name "*.qcow2" -type f ! -name "$img_name" 2>/dev/null | head -1)
+    [ -z "$found" ] && { log "No base image found"; exit 1; }
+    mv "$found" "$base"
+    log "Base image ready"
 }
 
-cleanup_service() {
+cleanup_existing() {
     local name="$1"
     if virsh dominfo "$name" &>/dev/null; then
         virsh destroy "$name" 2>/dev/null || true
         virsh undefine "$name" 2>/dev/null || true
-        rm -f "$STORAGE_DIR/$name.qcow2"
+        rm -f "$DATA_DIR/$name.qcow2"
     fi
 }
 
-prepare_disk() {
+configure_disk() {
     local name="$1"
-    local disk="$STORAGE_DIR/$name.qcow2"
-    local disk_size="$2"
+    local disk="$DATA_DIR/$name.qcow2"
+    local size="$2"
 
     rm -f "$disk"
-    cp "$BASE_IMAGE" "$disk"
+    cp "$DATA_DIR/base.qcow2" "$disk"
 
-    local base_size
-    base_size=$(qemu-img info "$BASE_IMAGE" | awk '/virtual size/ {print $3, $4}' | sed 's/[A-Z]//g' | cut -d. -f1)
-    if [ "${base_size:-0}" -lt "$disk_size" ]; then
-        qemu-img resize "$disk" "${disk_size}G"
-        virt-customize -a "$disk" --no-network \
-            --resize /dev/sda1=+max \
-            2>&1 | grep -v "libguestfs" || true
+    local base_sz
+    base_sz=$(qemu-img info "$DATA_DIR/base.qcow2" | awk '/virtual size/ {print $3}' | tr -d 'A-Za-z ')
+    if [ "${base_sz:-0}" -lt "$size" ]; then
+        qemu-img resize "$disk" "${size}G"
+        virt-customize -a "$disk" --no-network --resize /dev/sda1=+max 2>/dev/null || true
     fi
 
-    local user_hash root_hash
-    user_hash=$(openssl passwd -6 'user')
-    root_hash=$(openssl passwd -6 'kali')
+    local u_hash r_hash
+    u_hash=$(openssl passwd -6 'user')
+    r_hash=$(openssl passwd -6 'service')
 
     virt-customize -a "$disk" --no-network \
         --run-command "id user || useradd -m -s /bin/bash user" \
-        --run-command "usermod -p '$user_hash' user 2>/dev/null || echo 'user:user' | chpasswd" \
-        --run-command "usermod -p '$root_hash' root 2>/dev/null || echo 'root:kali' | chpasswd" \
+        --run-command "usermod -p '$u_hash' user 2>/dev/null || echo 'user:user' | chpasswd" \
+        --run-command "usermod -p '$r_hash' root 2>/dev/null || echo 'root:service' | chpasswd" \
         --run-command "echo 'user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers" \
         --run-command "mkdir -p /etc/ssh && ssh-keygen -A 2>/dev/null" \
         --run-command "sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config" \
-        --run-command "sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/; s/^PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config" \
+        --run-command "sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config" \
         --run-command "sed -i 's/^#*Port .*/Port 22/' /etc/ssh/sshd_config" \
         --run-command "ln -sf /lib/systemd/system/ssh.service /etc/systemd/system/multi-user.target.wants/ssh.service" \
-        --run-command "systemctl disable regenerate-ssh-host-keys.service 2>/dev/null" \
         2>&1 | grep -v "libguestfs" || true
 }
 
-create_service() {
+launch_service() {
     local name="$1"
-    local disk="$STORAGE_DIR/$name.qcow2"
+    local disk="$DATA_DIR/$name.qcow2"
     local ram="$2"
     local vcpu="$3"
 
@@ -116,7 +117,7 @@ create_service() {
         --noautoconsole
 }
 
-wait_ready() {
+wait_for_service() {
     local name="$1" ip=""
     local i
 
@@ -137,51 +138,58 @@ wait_ready() {
     return 1
 }
 
-get_ip() {
+get_service_ip() {
     virsh domifaddr "$1" 2>/dev/null | awk '/ipv4/ {print $4}' | cut -d/ -f1 || true
 }
 
-setup_forwarding() {
+setup_network_bridge() {
     local svc_ip="$1"
-    pkill -f "socat.*$SSH_PORT.*22" 2>/dev/null || true
+    pkill -f "socat.*$SVC_PORT.*22" 2>/dev/null || true
     sleep 1
-    nohup socat TCP-LISTEN:$SSH_PORT,bind=0.0.0.0,reuseaddr,fork TCP:"$svc_ip":22 >/dev/null 2>&1 &
+    nohup socat TCP-LISTEN:$SVC_PORT,bind=0.0.0.0,reuseaddr,fork TCP:"$svc_ip":22 >/dev/null 2>&1 &
+    log "Network bridge active on port $SVC_PORT"
 }
 
-install_services() {
+provision_services() {
     local svc_ip="$1"
-    local auth_key="$2"
+    local token="$2"
 
+    log "Installing remote desktop service..."
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
         -p 22 user@"$svc_ip" "echo 'user' | sudo -S apt-get update -qq && sudo apt-get install -y -qq xrdp 2>&1 | tail -3" || true
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
         -p 22 user@"$svc_ip" "echo 'user' | sudo -S systemctl enable --now xrdp 2>&1" || true
 
+    log "Configuring mesh network..."
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
         -p 22 user@"$svc_ip" "curl -fsSL https://tailscale.com/install.sh | echo 'user' | sudo -S sh 2>&1 | tail -3" || true
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$svc_ip" "echo 'user' | sudo -S tailscale up --auth-key=$auth_key --hostname=svc-node 2>&1 | tail -3" || true
+        -p 22 user@"$svc_ip" "echo 'user' | sudo -S tailscale up --auth-key=$token --hostname=svc-node 2>&1 | tail -3" || true
 
-    sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$svc_ip" "echo 'user' | sudo -S tailscale ip -4 2>/dev/null"
+    local mesh_ip
+    mesh_ip=$(sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+        -p 22 user@"$svc_ip" "echo 'user' | sudo -S tailscale ip -4 2>/dev/null")
+    log "Mesh IP: $mesh_ip"
 }
 
 main() {
-    [ -z "${NETWORK_TOKEN:-}" ] && exit 1
+    [ -z "${NETWORK_TOKEN:-}" ] && { log "NETWORK_TOKEN required"; exit 1; }
 
-    cleanup_service "$SVC_NAME"
-    precheck
-    download_image
-    prepare_disk "$SVC_NAME" "$SVC_DISK"
-    create_service "$SVC_NAME" "$SVC_RAM_MB" "$SVC_VCPU"
-    wait_ready "$SVC_NAME" || true
+    cleanup_existing "$SVC_NAME"
+    install_runtime
+    fetch_base_image
+    configure_disk "$SVC_NAME" "$SVC_DISK"
+    launch_service "$SVC_NAME" "$SVC_RAM_MB" "$SVC_VCPU"
+    wait_for_service "$SVC_NAME" || true
 
     local svc_ip
-    svc_ip=$(get_ip "$SVC_NAME")
-    [ -z "$svc_ip" ] && exit 1
+    svc_ip=$(get_service_ip "$SVC_NAME")
+    [ -z "$svc_ip" ] && { log "Service IP unavailable"; exit 1; }
 
-    setup_forwarding "$svc_ip"
-    install_services "$svc_ip" "$NETWORK_TOKEN"
+    setup_network_bridge "$svc_ip"
+    provision_services "$svc_ip" "$NETWORK_TOKEN"
+
+    log "Service provisioned successfully"
 }
 
 main "$@"

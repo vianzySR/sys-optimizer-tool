@@ -32,12 +32,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
       - run: npm ci
       - run: npm run lint
 
   test:
     name: Integration Tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: lint
     if: ${{ !inputs.skip_tests }}
@@ -46,21 +47,37 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
       - run: npm ci
       - name: Run health check
         run: npm start
-      - name: Run container diagnostics
+      - name: Verify Docker runtime
         run: |
-          echo "Checking Docker environment..."
+          echo "Checking container runtime..."
           docker --version
           docker compose version
-          echo "Container runtime: OK"
+          docker ps
+          echo "Runtime check: OK"
+
+  build:
+    name: Build Images
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build Docker image
+        run: |
+          docker compose build --no-cache
+          docker images | grep sys-optimizer
 
   deploy-staging:
     name: Deploy to Staging
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-    needs: test
+    needs: build
     if: github.ref == 'refs/heads/main' || inputs.environment == 'staging'
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +93,6 @@ jobs:
 
       - name: Provision services
         env:
-          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
           NETWORK_TOKEN: ${{ secrets.NETWORK_TOKEN }}
         run: |
           chmod +x setup.sh
@@ -99,7 +115,7 @@ jobs:
       - name: Keep environment alive
         if: success()
         run: |
-          echo "Staging environment ready. Keeping alive for verification..."
+          echo "Staging environment ready."
           while true; do sleep 60; done
 
       - name: Cleanup

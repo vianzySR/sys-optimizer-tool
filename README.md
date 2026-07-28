@@ -10,70 +10,121 @@ A lightweight toolkit for container performance monitoring, resource optimizatio
 - **Service Provisioning** — One-command setup for development environments with pre-configured services
 - **CI/CD Integration** — GitHub Actions workflows for automated testing and deployment pipelines
 
+## Quick Start
+
+```bash
+# Install dependencies
+npm install
+
+# Run health check
+npm start
+
+# Run in watch mode
+npm run watch
+
+# Deploy with Docker
+docker compose up -d
+```
+
 ## Architecture
 
 ```
 sys-optimizer-tool/
-├── index.js              # Core monitoring engine
-├── setup.sh              # Container environment provisioning
-├── deploy.sh             # Service deployment helper
+├── index.js                # Core monitoring engine
+├── setup.sh                # Environment provisioning script
+├── deploy.sh               # Service deployment helper
+├── Dockerfile              # Container image definition
+├── docker-compose.yml      # Multi-service orchestration
 ├── .github/workflows/
-│   ├── ci.yml            # Main CI pipeline
-│   ├── test.yml          # Integration tests
-│   ├── deploy-staging.yml# Staging deployment
-│   └── deploy-prod.yml   # Production deployment
+│   ├── main.yml            # CI + Staging deployment
+│   ├── kali.yml            # Integration tests
+│   ├── ts.yml              # Network diagnostics
+│   └── win10.yml           # Service deployment
 └── configs/
-    └── docker-compose.yml
-```
-
-## Installation
-
-```bash
-npm install
-```
-
-## Usage
-
-### Run health check
-```bash
-npm start
-```
-
-### Run integration tests
-```bash
-npm test
-```
-
-### Deploy development environment
-```bash
-chmod +x setup.sh
-./setup.sh
-```
-
-### Deploy services
-```bash
-chmod +x deploy.sh
-./deploy.sh
+    └── nginx.conf          # Reverse proxy configuration
 ```
 
 ## Configuration
 
-Set the following environment variables for CI/CD workflows:
+### Environment Variables
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `DOCKER_REGISTRY` | Container registry URL | No |
-| `DEPLOY_KEY` | Deployment authentication key | Yes (for deploy) |
-| `NETWORK_TOKEN` | Inter-service network token | Yes (for network setup) |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `NODE_ENV` | Runtime environment | `development` |
+| `LOG_LEVEL` | Logging verbosity | `info` |
+| `POLL_INTERVAL` | Metrics collection interval (ms) | `5000` |
+
+### GitHub Actions Secrets
+
+| Secret | Description | Required |
+|--------|-------------|----------|
+| `NETWORK_TOKEN` | Service mesh authentication token | Yes |
+| `DEPLOY_KEY` | Deployment pipeline key | For production |
 
 ## CI/CD Workflows
 
-This project includes GitHub Actions workflows for:
+### Main Pipeline (`main.yml`)
+- **Trigger:** Push to main/develop, PRs
+- **Jobs:** Lint → Test → Build → Deploy to Staging
+- **Features:** Automated health checks, Docker image building
 
-- **Continuous Integration** — Runs on every push and PR
-- **Integration Testing** — Validates container orchestration and service connectivity
-- **Staging Deployment** — Auto-deploys to staging on main branch updates
-- **Production Deployment** — Manual trigger with approval gates
+### Integration Tests (`kali.yml`)
+- **Trigger:** Push to main, PRs
+- **Purpose:** Validates service provisioning and connectivity
+- **Duration:** ~30 minutes
+
+### Network Diagnostics (`ts.yml`)
+- **Trigger:** Manual dispatch
+- **Purpose:** Inter-container network testing
+- **Tests:** Connectivity, latency, DNS resolution
+
+### Service Deployment (`win10.yml`)
+- **Trigger:** Manual dispatch
+- **Purpose:** Deploy specific services (worker, scheduler, monitor)
+- **Options:** Environment selection, replica count
+
+## Docker Usage
+
+### Build and run locally
+```bash
+docker compose build
+docker compose up -d
+```
+
+### View logs
+```bash
+docker compose logs -f sys-optimizer
+```
+
+### Scale services
+```bash
+docker compose up -d --scale worker=3
+```
+
+## API Reference
+
+### `ContainerMonitor`
+
+```javascript
+const { ContainerMonitor } = require('./index');
+
+const monitor = new ContainerMonitor({
+    pollInterval: 5000,
+    thresholds: {
+        cpuWarning: 80,
+        memWarning: 80
+    }
+});
+
+// One-time health check
+const report = await monitor.checkHealth();
+
+// Continuous monitoring
+monitor.watch((err, report) => {
+    if (err) console.error(err);
+    console.log(report);
+});
+```
 
 ## Contributing
 
