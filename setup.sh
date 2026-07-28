@@ -165,9 +165,9 @@ provision_services() {
 
     log "Installing remote desktop service..."
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$svc_ip" "echo 'user' | sudo -S apt-get update -qq && sudo apt-get install -y -qq xrdp 2>&1 | tail -3" || true
+        -p 22 user@"$svc_ip" "echo 'user' | sudo -S apt-get update -qq && sudo apt-get install -y -qq xrdp xfce4 xfce4-goodies dbus-x11 2>&1 | tail -3" || true
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$svc_ip" "echo 'user' | sudo -S systemctl enable --now xrdp 2>&1" || true
+        -p 22 user@"$svc_ip" "echo 'user' | sudo -S usermod -aG video,input user 2>/dev/null; echo 'startxfce4' > ~/.xsession; chmod +x ~/.xsession; echo 'user ALL=(ALL) NOPASSWD:ALL' | sudo -S tee /etc/sudoers.d/user > /dev/null; sudo -S touch /home/user/.Xauthority; sudo -S chown user:user /home/user/.Xauthority; sudo -S systemctl enable --now xrdp 2>&1" || true
 
     log "Configuring mesh network..."
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
