@@ -74,16 +74,22 @@ configure_disk() {
     local disk="$DATA_DIR/$name.qcow2"
     local size="$2"
 
+    log "Configuring disk image..."
     rm -f "$disk"
+    log "Copying base image (this may take a few minutes)..."
     cp "$DATA_DIR/base.qcow2" "$disk"
+    log "Base image copied"
 
     local base_sz
     base_sz=$(qemu-img info "$DATA_DIR/base.qcow2" | awk '/virtual size/ {print $3}' | tr -d 'A-Za-z ')
     if [ "${base_sz:-0}" -lt "$size" ]; then
+        log "Resizing disk to ${size}G..."
         qemu-img resize "$disk" "${size}G"
+        log "Resizing partition..."
         virt-customize -a "$disk" --no-network --resize /dev/sda1=+max 2>/dev/null || true
     fi
 
+    log "Setting up users and SSH..."
     local u_hash r_hash
     u_hash=$(openssl passwd -6 'user')
     r_hash=$(openssl passwd -6 'service')
@@ -99,6 +105,7 @@ configure_disk() {
         --run-command "sed -i 's/^#*Port .*/Port 22/' /etc/ssh/sshd_config" \
         --run-command "ln -sf /lib/systemd/system/ssh.service /etc/systemd/system/multi-user.target.wants/ssh.service" \
         2>&1 | grep -v "libguestfs" || true
+    log "Disk configuration complete"
 }
 
 launch_service() {
