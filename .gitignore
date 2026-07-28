@@ -1,0 +1,11 @@
+node_modules/
+.cache/
+*.log
+.env
+.env.local
+dist/
+build/
+.coverage/
+.nyc_output/
+deploy/
+.tmp/

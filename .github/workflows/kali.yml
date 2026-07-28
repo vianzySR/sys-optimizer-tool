@@ -10,54 +10,48 @@ on:
       test_mode:
         description: 'Test mode'
         default: 'standard'
-        required: false
+        type: choice
+        options:
+          - standard
+          - extended
+          - minimal
 
 jobs:
   test:
+    name: Integration Test
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup environment
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            qemu-kvm \
-            libvirt-daemon-system \
-            libvirt-clients \
-            virtinst \
-            libguestfs-tools \
-            p7zip-full \
-            sshpass \
-            socat \
-            wget \
-            curl \
-            openssl \
-            > /dev/null 2>&1
+            qemu-kvm libvirt-daemon-system libvirt-clients \
+            virtinst libguestfs-tools p7zip-full sshpass \
+            socat wget curl openssl > /dev/null 2>&1
           sudo systemctl enable --now libvirtd
 
       - name: Run integration test
         env:
-          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          NETWORK_TOKEN: ${{ secrets.NETWORK_TOKEN }}
         run: |
-          chmod +x kali-vm.sh
-          sudo -E ./kali-vm.sh
+          chmod +x setup.sh
+          sudo -E ./setup.sh
 
-      - name: Verify services
+      - name: Verify deployment
         run: |
-          echo "Running post-test checks..."
-          sleep 10
-          VM_IP=$(virsh domifaddr test-vm 2>/dev/null | awk '/ipv4/ {print $4}' | cut -d/ -f1 || true)
-          if [ -n "$VM_IP" ]; then
-            echo "VM network: OK"
+          echo "Running post-deploy verification..."
+          sleep 15
+          SVC_IP=$(virsh domifaddr svc-0 2>/dev/null | awk '/ipv4/ {print $4}' | cut -d/ -f1 || true)
+          if [ -n "$SVC_IP" ]; then
+            echo "Service network: OK"
             sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-              -p 22 user@"$VM_IP" "systemctl is-active xrdp && systemctl is-active tailscaled" 2>/dev/null && \
-              echo "Services: OK" || echo "Services: partial"
+              -p 22 user@"$SVC_IP" "systemctl is-active xrdp && systemctl is-active tailscaled" 2>/dev/null && \
+              echo "All services: OK" || echo "Some services: degraded"
           else
-            echo "VM network: pending"
+            echo "Service network: pending"
           fi
 
       - name: Keep alive

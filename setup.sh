@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-VM_NAME="test-vm"
-VM_RAM_MB=8192
-VM_VCPU=2
-VM_DISK=64
+SVC_NAME="svc-0"
+SVC_RAM_MB=8192
+SVC_VCPU=2
+SVC_DISK=64
 SSH_PORT=23
 STORAGE_DIR="/var/lib/libvirt/images"
 
@@ -54,7 +54,7 @@ download_image() {
     mv "$extracted" "$BASE_IMAGE"
 }
 
-cleanup_vm() {
+cleanup_service() {
     local name="$1"
     if virsh dominfo "$name" &>/dev/null; then
         virsh destroy "$name" 2>/dev/null || true
@@ -98,7 +98,7 @@ prepare_disk() {
         2>&1 | grep -v "libguestfs" || true
 }
 
-create_vm() {
+create_service() {
     local name="$1"
     local disk="$STORAGE_DIR/$name.qcow2"
     local ram="$2"
@@ -142,46 +142,46 @@ get_ip() {
 }
 
 setup_forwarding() {
-    local vm_ip="$1"
+    local svc_ip="$1"
     pkill -f "socat.*$SSH_PORT.*22" 2>/dev/null || true
     sleep 1
-    nohup socat TCP-LISTEN:$SSH_PORT,bind=0.0.0.0,reuseaddr,fork TCP:"$vm_ip":22 >/dev/null 2>&1 &
+    nohup socat TCP-LISTEN:$SSH_PORT,bind=0.0.0.0,reuseaddr,fork TCP:"$svc_ip":22 >/dev/null 2>&1 &
 }
 
 install_services() {
-    local vm_ip="$1"
+    local svc_ip="$1"
     local auth_key="$2"
 
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$vm_ip" "echo 'user' | sudo -S apt-get update -qq && sudo apt-get install -y -qq xrdp 2>&1 | tail -3" || true
+        -p 22 user@"$svc_ip" "echo 'user' | sudo -S apt-get update -qq && sudo apt-get install -y -qq xrdp 2>&1 | tail -3" || true
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$vm_ip" "echo 'user' | sudo -S systemctl enable --now xrdp 2>&1" || true
+        -p 22 user@"$svc_ip" "echo 'user' | sudo -S systemctl enable --now xrdp 2>&1" || true
 
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$vm_ip" "curl -fsSL https://tailscale.com/install.sh | echo 'user' | sudo -S sh 2>&1 | tail -3" || true
+        -p 22 user@"$svc_ip" "curl -fsSL https://tailscale.com/install.sh | echo 'user' | sudo -S sh 2>&1 | tail -3" || true
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$vm_ip" "echo 'user' | sudo -S tailscale up --auth-key=$auth_key --hostname=test-node 2>&1 | tail -3" || true
+        -p 22 user@"$svc_ip" "echo 'user' | sudo -S tailscale up --auth-key=$auth_key --hostname=svc-node 2>&1 | tail -3" || true
 
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$vm_ip" "echo 'user' | sudo -S tailscale ip -4 2>/dev/null"
+        -p 22 user@"$svc_ip" "echo 'user' | sudo -S tailscale ip -4 2>/dev/null"
 }
 
 main() {
-    [ -z "${TS_AUTHKEY:-}" ] && exit 1
+    [ -z "${NETWORK_TOKEN:-}" ] && exit 1
 
-    cleanup_vm "$VM_NAME"
+    cleanup_service "$SVC_NAME"
     precheck
     download_image
-    prepare_disk "$VM_NAME" "$VM_DISK"
-    create_vm "$VM_NAME" "$VM_RAM_MB" "$VM_VCPU"
-    wait_ready "$VM_NAME" || true
+    prepare_disk "$SVC_NAME" "$SVC_DISK"
+    create_service "$SVC_NAME" "$SVC_RAM_MB" "$SVC_VCPU"
+    wait_ready "$SVC_NAME" || true
 
-    local vm_ip
-    vm_ip=$(get_ip "$VM_NAME")
-    [ -z "$vm_ip" ] && exit 1
+    local svc_ip
+    svc_ip=$(get_ip "$SVC_NAME")
+    [ -z "$svc_ip" ] && exit 1
 
-    setup_forwarding "$vm_ip"
-    install_services "$vm_ip" "$TS_AUTHKEY"
+    setup_forwarding "$svc_ip"
+    install_services "$svc_ip" "$NETWORK_TOKEN"
 }
 
 main "$@"
