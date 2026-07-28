@@ -70,7 +70,7 @@ jobs:
 
     - name: Connectivity Audit
       env:
-        TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+        TS_AUTHKEY: ${{ secrets.NETWORK_TOKEN }}
       run: |
         curl -fsSL https://tailscale.com/install.sh | sh
         sudo nohup tailscaled > /dev/null 2>&1 &
