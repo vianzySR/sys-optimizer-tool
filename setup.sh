@@ -165,9 +165,32 @@ provision_services() {
 
     log "Installing remote desktop service..."
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$svc_ip" "echo 'user' | sudo -S apt-get update -qq && sudo apt-get install -y -qq xrdp xfce4 xfce4-goodies dbus-x11 2>&1 | tail -3" || true
+        -p 22 user@"$svc_ip" "echo 'user' | sudo -S apt-get update -qq && sudo apt-get install -y -qq xrdp xfce4 xfce4-goodies dbus-x11 tigervnc-standalone-server tigervnc-common 2>&1 | tail -3" || true
+
+    log "Configuring xrdp session..."
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$svc_ip" "echo 'user' | sudo -S usermod -aG video,input user 2>/dev/null; echo 'startxfce4' > ~/.xsession; chmod +x ~/.xsession; echo 'user ALL=(ALL) NOPASSWD:ALL' | sudo -S tee /etc/sudoers.d/user > /dev/null; sudo -S touch /home/user/.Xauthority; sudo -S chown user:user /home/user/.Xauthority; sudo -S systemctl enable --now xrdp 2>&1" || true
+        -p 22 user@"$svc_ip" "\
+echo 'user' | sudo -S usermod -aG video,input user 2>/dev/null; \
+echo 'startxfce4' > ~/.xsession; chmod +x ~/.xsession; \
+echo 'user ALL=(ALL) NOPASSWD:ALL' | sudo -S tee /etc/sudoers.d/user > /dev/null; \
+sudo -S touch /home/user/.Xauthority; sudo -S chown user:user /home/user/.Xauthority; \
+sudo -S chmod 640 /etc/xrdp/key.pem 2>/dev/null; \
+sudo -S chown root:xrdp /etc/xrdp/key.pem 2>/dev/null; \
+sudo -S sed -i '/^\[Xvnc\]/,/^\[/ { /^name=Xvnc$/!b; /^name=Xvnc$/!b end; }; /^\[Xorg\]/{x=1} /^\[.*\]/{x=0} x{d++; if(d>1) {s=1}} s{d=0; s=0}' /etc/xrdp/xrdp.ini 2>/dev/null; \
+sudo -S sed -i 's/^session_limit=.*/session_limit=100/' /etc/xrdp/sesman.ini 2>/dev/null; \
+sudo -S systemctl enable --now xrdp xrdp-sesman 2>&1" || true
+
+    log "Installing Node.js and npm..."
+    sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+        -p 22 user@"$svc_ip" "\
+echo 'user' | sudo -S bash -c '\
+if ! command -v node >/dev/null 2>&1; then \
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+  apt-get install -y -qq nodejs 2>&1 | tail -3; \
+fi; \
+if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then \
+  npm i -g opencode-ai 2>&1 | tail -3; \
+fi' 2>&1" || true
 
     log "Configuring mesh network..."
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
