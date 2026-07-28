@@ -43,10 +43,9 @@ jobs:
 
       - name: Setup runtime
         run: |
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            docker.io curl > /dev/null 2>&1
-          sudo systemctl enable --now docker
+          sudo systemctl enable --now docker 2>/dev/null || true
+          docker --version
+          docker compose version
 
       - name: Initialize configuration
         run: |

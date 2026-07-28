@@ -17,7 +17,7 @@ SVC_HOSTNAME="${SVC_HOSTNAME:-desktop-node}"
 
 echo "=== Installing dependencies ==="
 apt-get update -qq
-apt-get install -y -qq docker.io curl > /dev/null 2>&1
+apt-get install -y -qq curl > /dev/null 2>&1
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl enable docker || true
