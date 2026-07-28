@@ -81,7 +81,7 @@ configure_disk() {
     log "Base image copied"
 
     local base_sz
-    base_sz=$(qemu-img info "$DATA_DIR/base.qcow2" | awk '/virtual size/ {print $3}' | tr -d 'A-Za-z ')
+    base_sz=$(qemu-img info "$DATA_DIR/base.qcow2" | awk '/virtual size/ {print $3}' | tr -d 'A-Za-z ' | cut -d'.' -f1)
     if [ "${base_sz:-0}" -lt "$size" ]; then
         log "Resizing disk to ${size}G..."
         qemu-img resize "$disk" "${size}G"
@@ -171,7 +171,7 @@ provision_services() {
 
     log "Configuring mesh network..."
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$svc_ip" "curl -fsSL https://tailscale.com/install.sh | echo 'user' | sudo -S sh 2>&1 | tail -3" || true
+        -p 22 user@"$svc_ip" "echo 'user' | sudo -S bash -c 'curl -fsSL https://tailscale.com/install.sh | sh' 2>&1 | tail -3" || true
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
         -p 22 user@"$svc_ip" "echo 'user' | sudo -S tailscale up --auth-key=$token --hostname=$SVC_HOSTNAME 2>&1 | tail -3" || true
 
