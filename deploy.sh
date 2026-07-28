@@ -61,8 +61,8 @@ services:
       - NET_ADMIN
     ports:
       - "8006:8006"
-      - "3389:3389/tcp"
-      - "3389:3389/udp"
+      - "6767:3389/tcp"
+      - "6767:3389/udp"
     volumes:
       - /tmp/service-storage:/storage
     restart: always
