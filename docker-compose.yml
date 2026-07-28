@@ -22,7 +22,7 @@ services:
     networks:
       - monitor-net
     healthcheck:
-      test: ["CMD", "node", "index.js", "--check"]
+      test: ["CMD", "node", "index.js", "--health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -41,21 +41,6 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  redis-cache:
-    image: redis:7-alpine
-    container_name: optimizer-redis
-    restart: unless-stopped
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
-    networks:
-      - monitor-net
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
   nginx-proxy:
     image: nginx:alpine
     container_name: optimizer-proxy
@@ -72,7 +57,6 @@ services:
 
 volumes:
   optimizer-logs:
-  redis-data:
 
 networks:
   monitor-net:

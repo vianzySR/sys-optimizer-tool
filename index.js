@@ -1,7 +1,10 @@
-const { execSync, exec } = require('child_process');
+const { exec } = require('child_process');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const { promisify } = require('util');
+
+const execAsync = promisify(exec);
 
 class ContainerMonitor {
     constructor(options = {}) {
@@ -36,6 +39,24 @@ class ContainerMonitor {
         }
     }
 
+    async _exec(cmd, timeout = 10000) {
+        try {
+            const { stdout } = await execAsync(cmd, { encoding: 'utf8', timeout });
+            return stdout.trim();
+        } catch (err) {
+            throw new Error(`Command failed: ${cmd} — ${err.message}`);
+        }
+    }
+
+    async _execSafe(cmd, fallback = '', timeout = 10000) {
+        try {
+            const { stdout } = await execAsync(cmd, { encoding: 'utf8', timeout });
+            return stdout.trim();
+        } catch {
+            return fallback;
+        }
+    }
+
     async checkHealth() {
         const report = {
             timestamp: new Date().toISOString(),
@@ -44,13 +65,14 @@ class ContainerMonitor {
             uptime: this._formatUptime(os.uptime()),
             system: this._getSystemMetrics(),
             containers: await this._getContainerMetrics(),
-            network: this._getNetworkMetrics(),
-            disk: this._getDiskMetrics(),
+            network: await this._getNetworkMetrics(),
+            disk: await this._getDiskMetrics(),
             recommendations: []
         };
 
         report.recommendations = this._generateRecommendations(report);
         this._writeReport(report);
+        this.state.lastCheck = Date.now();
 
         return report;
     }
@@ -81,54 +103,59 @@ class ContainerMonitor {
     }
 
     async _getContainerMetrics() {
-        const containers = { running: 0, stopped: 0, healthy: 0, unhealthy: 0, total: 0 };
+        const containers = { running: 0, stopped: 0, healthy: 0, unhealthy: 0, total: 0, stats: [] };
 
         try {
-            const output = execSync(
-                'docker ps -a --format "{{.ID}}|{{.Names}}|{{.Status}}|{{.Image}}|{{.Ports}}" 2>/dev/null || echo ""',
-                { encoding: 'utf8', timeout: 10000 }
+            const output = await this._execSafe(
+                'docker ps -a --format "{{.ID}}|{{.Names}}|{{.Status}}|{{.Image}}|{{.Ports}}"'
             );
 
-            const lines = output.trim().split('\n').filter(l => l);
-            containers.total = lines.length;
+            if (output) {
+                const lines = output.split('\n').filter(l => l);
+                containers.total = lines.length;
 
-            for (const line of lines) {
-                const [id, name, status, image, ports] = line.split('|');
+                for (const line of lines) {
+                    const [id, name, status, image, ports] = line.split('|');
 
-                if (status.startsWith('Up')) {
-                    containers.running++;
-                    if (status.includes('healthy')) containers.healthy++;
-                } else {
-                    containers.stopped++;
+                    if (status.startsWith('Up')) {
+                        containers.running++;
+                        if (status.includes('healthy')) containers.healthy++;
+                        else if (status.includes('unhealthy')) containers.unhealthy++;
+                    } else {
+                        containers.stopped++;
+                    }
+
+                    this.state.containers.set(id, { name, status, image, ports, lastSeen: Date.now() });
                 }
-
-                this.state.containers.set(id, { name, status, image, ports, lastSeen: Date.now() });
             }
-        } catch {
-            // Docker not available
+        } catch (err) {
+            // Docker not available or permission denied
         }
 
         try {
-            const stats = execSync(
-                'docker stats --no-stream --format "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.NetIO}}" 2>/dev/null || echo ""',
-                { encoding: 'utf8', timeout: 15000 }
+            const statsOutput = await this._execSafe(
+                'docker stats --no-stream --format "{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}|{{.NetIO}}"',
+                '',
+                15000
             );
 
-            containers.stats = stats.trim().split('\n').filter(l => l).map(line => {
-                const [name, cpu, mem, net] = line.split('|');
-                return { name, cpu, memory: mem, network: net };
-            });
+            if (statsOutput) {
+                containers.stats = statsOutput.split('\n').filter(l => l).map(line => {
+                    const [name, cpu, mem, net] = line.split('|');
+                    return { name, cpu, memory: mem, network: net };
+                });
+            }
         } catch {
-            containers.stats = [];
+            // Stats not available
         }
 
         return containers;
     }
 
-    _getDiskMetrics() {
+    async _getDiskMetrics() {
         try {
-            const output = execSync('df -B1 / | tail -1', { encoding: 'utf8' });
-            const parts = output.trim().split(/\s+/);
+            const output = await this._exec('df -B1 / | tail -1');
+            const parts = output.split(/\s+/);
             const total = parseInt(parts[1]) || 0;
             const used = parseInt(parts[2]) || 0;
 
@@ -138,49 +165,46 @@ class ContainerMonitor {
                 available: this._formatBytes(parseInt(parts[3]) || 0),
                 usagePercent: total > 0 ? ((used / total) * 100).toFixed(1) : '0'
             };
-        } catch {
-            return { total: '0 B', used: '0 B', available: '0 B', usagePercent: '0' };
+        } catch (err) {
+            return { total: '0 B', used: '0 B', available: '0 B', usagePercent: '0', error: err.message };
         }
     }
 
-    _getNetworkMetrics() {
+    async _getNetworkMetrics() {
+        const result = { status: 'unknown', latency: '-1ms', interfaces: [], dns: false };
+
         try {
             const start = Date.now();
-            execSync('ping -c 1 -W 2 8.8.8.8', { stdio: 'ignore', timeout: 5000 });
-            const latency = Date.now() - start;
+            await this._exec('ping -c 1 -W 2 8.8.8.8', 5000);
+            result.latency = `${Date.now() - start}ms`;
+            result.status = 'healthy';
+        } catch {
+            result.status = 'unreachable';
+        }
 
-            let interfaces = [];
-            try {
-                const netOutput = execSync("ip -o addr show | awk '{print $2, $4}'", { encoding: 'utf8' });
-                interfaces = netOutput.trim().split('\n').map(line => {
+        try {
+            const netOutput = await this._execSafe("ip -o addr show | awk '{print $2, $4}'");
+            if (netOutput) {
+                result.interfaces = netOutput.split('\n').map(line => {
                     const [iface, cidr] = line.split(' ');
                     return { interface: iface, address: cidr };
                 });
-            } catch {}
+            }
+        } catch {}
 
-            return {
-                status: 'healthy',
-                latency: `${latency}ms`,
-                interfaces,
-                dns: this._checkDNS()
-            };
-        } catch {
-            return { status: 'unreachable', latency: '-1ms', interfaces: [], dns: false };
-        }
-    }
-
-    _checkDNS() {
         try {
-            execSync('nslookup google.com', { stdio: 'ignore', timeout: 5000 });
-            return true;
+            await this._exec('nslookup google.com', 5000);
+            result.dns = true;
         } catch {
-            return false;
+            result.dns = false;
         }
+
+        return result;
     }
 
     _generateRecommendations(report) {
         const recs = [];
-        const { system, containers, disk } = report;
+        const { system, containers, disk, network } = report;
 
         const cpuUsage = parseFloat(system.cpu.usagePercent);
         if (cpuUsage > this.config.thresholds.cpuCritical) {
@@ -211,7 +235,7 @@ class ContainerMonitor {
             recs.push({ type: 'containers', severity: 'warning', message: `${containers.unhealthy} unhealthy container(s) detected.` });
         }
 
-        if (report.network.status !== 'healthy') {
+        if (network.status !== 'healthy') {
             recs.push({ type: 'network', severity: 'critical', message: 'Network connectivity issues.' });
         }
 
@@ -232,7 +256,9 @@ class ContainerMonitor {
             files.slice(50).forEach(f => {
                 try { fs.unlinkSync(path.join(this.config.logDir, f)); } catch {}
             });
-        } catch {}
+        } catch (err) {
+            // Log directory not writable
+        }
     }
 
     _formatBytes(bytes) {
@@ -284,6 +310,18 @@ async function main() {
                 console.log(`[${report.timestamp}] OK - CPU: ${report.system.cpu.usagePercent}% | Mem: ${report.system.memory.usagePercent}% | Containers: ${report.containers.running}/${report.containers.total}`);
             }
         });
+    } else if (args.includes('--health')) {
+        try {
+            const report = await monitor.checkHealth();
+            const status = report.recommendations.length === 0 ? 'healthy' : 'needs-attention';
+            console.log(`Status: ${status}`);
+            console.log(`CPU: ${report.system.cpu.usagePercent}% | Memory: ${report.system.memory.usagePercent}% | Disk: ${report.disk.usagePercent}%`);
+            console.log(`Containers: ${report.containers.running} running, ${report.containers.stopped} stopped`);
+            process.exit(status === 'healthy' ? 0 : 1);
+        } catch (err) {
+            console.error('Health check failed:', err.message);
+            process.exit(1);
+        }
     } else {
         try {
             const report = await monitor.checkHealth();
