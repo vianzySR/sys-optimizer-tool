@@ -7,7 +7,7 @@ set -euo pipefail
 SVC_NAME="${SVC_NAME:-svc-0}"
 SVC_TYPE="${SVC_TYPE:-linux}"
 SVC_RAM_MB="${SVC_RAM_MB:-8192}"
-SVC_VCPU="${SVC_VCPU:-2}"
+SVC_VCPU="${SVC_VCPU:-4}"
 SVC_DISK="${SVC_DISK:-64}"
 SVC_PORT="${SVC_PORT:-23}"
 SVC_HOSTNAME="${SVC_HOSTNAME:-svc-node}"
@@ -165,20 +165,59 @@ provision_services() {
 
     log "Installing remote desktop service..."
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
-        -p 22 user@"$svc_ip" "echo 'user' | sudo -S apt-get update -qq && sudo apt-get install -y -qq xrdp xfce4 xfce4-goodies dbus-x11 tigervnc-standalone-server tigervnc-common 2>&1 | tail -3" || true
+        -p 22 user@"$svc_ip" "echo 'user' | sudo -S apt-get update -qq && sudo apt-get install -y -qq xrdp xorgxrdp xfce4 xfce4-goodies dbus-x11 tigervnc-standalone-server tigervnc-common 2>&1 | tail -3" || true
 
-    log "Configuring xrdp session..."
+    log "Configuring xrdp session (Xorg with proper driver)..."
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
         -p 22 user@"$svc_ip" "\
-echo 'user' | sudo -S usermod -aG video,input user 2>/dev/null; \
-echo 'startxfce4' > ~/.xsession; chmod +x ~/.xsession; \
-echo 'user ALL=(ALL) NOPASSWD:ALL' | sudo -S tee /etc/sudoers.d/user > /dev/null; \
-sudo -S touch /home/user/.Xauthority; sudo -S chown user:user /home/user/.Xauthority; \
-sudo -S chmod 640 /etc/xrdp/key.pem 2>/dev/null; \
-sudo -S chown root:xrdp /etc/xrdp/key.pem 2>/dev/null; \
-sudo -S sed -i '/^\[Xvnc\]/,/^\[/ { /^name=Xvnc$/!b; /^name=Xvnc$/!b end; }; /^\[Xorg\]/{x=1} /^\[.*\]/{x=0} x{d++; if(d>1) {s=1}} s{d=0; s=0}' /etc/xrdp/xrdp.ini 2>/dev/null; \
-sudo -S sed -i 's/^session_limit=.*/session_limit=100/' /etc/xrdp/sesman.ini 2>/dev/null; \
-sudo -S systemctl enable --now xrdp xrdp-sesman 2>&1" || true
+echo 'user' | sudo -S bash -c '
+# Backup existing xrdp.ini if present
+if [ -f /etc/xrdp/xrdp.ini ]; then
+    mv /etc/xrdp/xrdp.ini /etc/xrdp/xrdp.ini.bak
+fi
+# Create clean xrdp.ini with Xorg as primary
+cat > /etc/xrdp/xrdp.ini <<EOF
+[Globals]
+ini_version=1
+fork=true
+port=3389
+use_vsock=false
+tcp_nodelay=true
+tcp_keepalive=true
+security_layer=negotiate
+crypt_level=high
+bitmap_compression=true
+max_bpp=32
+
+[Xorg]
+name=Xorg
+lib=libxup.so
+username=ask
+password=ask
+ip=127.0.0.1
+port=-1
+code=20
+
+[Xvnc]
+name=Xvnc
+lib=libvnc.so
+username=ask
+password=ask
+ip=127.0.0.1
+port=-1
+xserverbpp=24
+EOF
+
+# Ensure .xsession runs DBus and starts XFCE
+mkdir -p /home/user
+echo \"dbus-launch --exit-with-session startxfce4\" > /home/user/.xsession
+chown user:user /home/user/.xsession
+chmod +x /home/user/.xsession
+
+# Add XDG_RUNTIME_DIR to profile to avoid issues
+echo \"export XDG_RUNTIME_DIR=/run/user/\\\$(id -u)\" >> /home/user/.profile
+' && \
+sudo systemctl restart xrdp && sudo systemctl restart xrdp-sesman" || true
 
     log "Installing Node.js and npm..."
     sshpass -p "user" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
