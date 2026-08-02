@@ -7,7 +7,7 @@ set -euo pipefail
 SVC_NAME="${SVC_NAME:-svc-0}"
 SVC_TYPE="${SVC_TYPE:-linux}"
 SVC_RAM_MB="${SVC_RAM_MB:-12288}"
-SVC_VCPU="${SVC_VCPU:-2}"
+SVC_VCPU="${SVC_VCPU:-4}"
 SVC_DISK="${SVC_DISK:-64}"
 SVC_PORT="${SVC_PORT:-23}"
 SVC_HOSTNAME="${SVC_HOSTNAME:-svc-node}"
