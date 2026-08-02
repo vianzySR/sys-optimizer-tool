@@ -38,7 +38,7 @@ jobs:
           NETWORK_TOKEN: ${{ secrets.NETWORK_TOKEN }}
           SVC_NAME: svc-lab
           SVC_TYPE: linux
-          SVC_RAM_MB: "8192"
+          SVC_RAM_MB: "12288"
           SVC_VCPU: "4"
           SVC_DISK: "64"
           SVC_PORT: "23"
