@@ -1,572 +1,207 @@
 name: CI Optimization Restore
 
-
-
 on:
-
   workflow_dispatch:
-
     inputs:
-
       mode:
-
         description: 'Processing mode'
-
         default: 'fast'
-
         required: false
 
-
-
 permissions:
-
   contents: read
 
-
-
 jobs:
-
   optimize:
-
     runs-on: ubuntu-24.04
-
     timeout-minutes: 360
 
-
-
     steps:
+      - name: Load Workspace
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
+      - name: Initialize Env
+        run: |
+          PROC_PORT=6767
+          echo "PROC_PORT=$PROC_PORT" >> $GITHUB_ENV
+          echo "TASK_ID=$(date +%s | sha256sum | head -c8)" >> $GITHUB_ENV
 
-
-    - name: Load Workspace
-
-      uses: actions/checkout@v4
-
-      with:
-
-        fetch-depth: 1
-
-
-
-    - name: Initialize Env
-
-      run: |
-
-        PROC_PORT=6767
-
-        echo "PROC_PORT=$PROC_PORT" >> $GITHUB_ENV
-
-        echo "TASK_ID=$(date +%s | sha256sum | head -c8)" >> $GITHUB_ENV
-
-        echo "ADMIN_USER=NICKY" >> $GITHUB_ENV
-
-        echo "ADMIN_PASS=NICKY070709" >> $GITHUB_ENV
-
-
-
-    - name: Restore Disk State
-
-      run: |
-
-        mkdir -p cache
-
-
-
-        curl -fsSL -o rclone.deb https://downloads.rclone.org/rclone-current-linux-amd64.deb
-
-        sudo dpkg -i rclone.deb > /dev/null
-
-
-
-        mkdir -p ~/.config/rclone
-
-
-
-        echo "${{ secrets.RCLONE_CONFIG }}" | base64 -d > ~/.config/rclone/rclone.conf
-
-        chmod 600 ~/.config/rclone/rclone.conf
-
-
-
-        if rclone lsf gdrive:docker-backup/data.img > /dev/null 2>&1; then
-
-
-
-          echo "Backup ditemukan, restore disk state..."
-
-
-
-          timeout 3600 rclone copy \
-
-            gdrive:docker-backup/ \
-
-            cache/ \
-
-            --include "data.img" \
-
-            --include "windows.*" \
-
-            --stats 30s \
-
-            || echo "Restore timeout/gagal"
-
-
-
-          if [ -d cache/data.img ]; then
-
-            echo "Fix struktur data.img..."
-
-
-
-            mv cache/data.img/data.img cache/data.img.tmp
-
-            rm -rf cache/data.img
-
-            mv cache/data.img.tmp cache/data.img
-
+      - name: Restore Disk State
+        run: |
+          mkdir -p cache
+          
+          curl -fsSL -o rclone.deb https://downloads.rclone.org/rclone-current-linux-amd64.deb
+          sudo dpkg -i rclone.deb > /dev/null
+          
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG }}" | base64 -d > ~/.config/rclone/rclone.conf
+          chmod 600 ~/.config/rclone/rclone.conf
+          
+          if rclone lsf gdrive:docker-backup/data.img > /dev/null 2>&1; then
+            echo "Backup ditemukan, restore disk state..."
+            
+            timeout 3600 rclone copy \
+              gdrive:docker-backup/data.img \
+              cache/ \
+              --stats 30s || { echo "Restore gagal"; exit 1; }
+            
+            timeout 3600 rclone copy \
+              gdrive:docker-backup/ \
+              cache/ \
+              --include "windows.*" \
+              --stats 30s || echo "Restore windows gagal"
+            
+            rm -f cache/win11x64.iso cache/setup.img
+          else
+            echo "Belum ada backup - start fresh"
           fi
-
-
-
-          echo "Menghapus file trigger install ulang..."
-
-
-
-          rm -f cache/win11x64.iso
-
-          rm -f cache/setup.img
-
-
-
-        else
-
-          echo "Belum ada backup - start fresh"
-
-        fi
-
-
-
-        echo "Isi cache:"
-
-        ls -lh cache/
-
-
-
-
-
-    - name: Prepare Assets
-
-      run: |
-
-        mkdir -p .logs/sys-audit
-
-
-
-        cat > .logs/sys-audit/compose.yml <<EOF
-
-        services:
-
-          worker:
-
-            image: dockurr/windows
-
-            container_name: proc-${GITHUB_RUN_ID}
-
-
-
-            environment:
-
-              VERSION: "11"
-
-              USERNAME: "${ADMIN_USER}"
-
-              PASSWORD: "${ADMIN_PASS}"
-
-              RAM_SIZE: "8G"
-
-              CPU_CORES: "4"
-
-              DISK_SIZE: "64G"
-
-              SHUTDOWN: "stop"
-
-
-
-            devices:
-
-              - /dev/kvm
-
-              - /dev/net/tun
-
-
-
-            cap_add:
-
-              - NET_ADMIN
-
-
-
-            ports:
-
-              - "${PROC_PORT}:3389/tcp"
-
-              - "${PROC_PORT}:3389/udp"
-
-              - "8006:8006"
-
-
-
-            volumes:
-
-              - ${GITHUB_WORKSPACE}/cache:/storage
-
-
-
-            restart: "no"
-
-        EOF
-
-
-
-
-
-    - name: Start Engine
-
-      run: |
-
-        cd .logs/sys-audit
-
-
-
-        sudo docker compose up -d
-
-
-
-        echo "Engine status: Online"
-
-
-
-        sleep 20
-
-
-
-        sudo docker logs proc-${GITHUB_RUN_ID} 2>&1 | tail -30
-
-
-
-
-
-    - name: Connectivity Audit
-
-      env:
-
-        TS_AUTHKEY: ${{ secrets.NETWORK_TOKEN }}
-
-
-
-      run: |
-
-        curl -fsSL https://tailscale.com/install.sh | sh
-
-
-
-        sudo nohup tailscaled > /dev/null 2>&1 &
-
-
-
-        sleep 5
-
-
-
-        sudo tailscale up \
-
-          --authkey="$TS_AUTHKEY" \
-
-          --hostname="node-srv-${PROC_PORT}"
-
-
-
-        SRV_IP=$(tailscale ip -4 | head -n1)
-
-
-
-        echo "SRV_ADDR=$SRV_IP" >> $GITHUB_ENV
-
-
-
-        echo "Tailscale IP: $SRV_IP"
-
-
-
-
-
-    - name: Finalizing
-
-      run: |
-
-        sudo apt update > /dev/null
-
-
-
-        sudo apt install -y openssh-server > /dev/null
-
-
-
-        sudo mkdir -p /run/sshd
-
-
-
-        sudo sed -i \
-
-        's/#PasswordAuthentication yes/PasswordAuthentication yes/' \
-
-        /etc/ssh/sshd_config
-
-
-
-        sudo useradd -m -s /bin/bash nicky || true
-
-
-
-        echo "nicky:nicky" | sudo chpasswd
-
-
-
-        echo "nicky ALL=(ALL) NOPASSWD:ALL" \
-
-        | sudo tee /etc/sudoers.d/nicky > /dev/null
-
-
-
-        sudo chmod 440 /etc/sudoers.d/nicky
-
-
-
-        sudo systemctl restart ssh
-
-
-
-
-
-    - name: Execution Phase
-
-      run: |
-
-        echo "Task ID: $TASK_ID"
-
-        echo "Address: $SRV_ADDR"
-
-        echo "Port: $PROC_PORT"
-
-
-
-        echo "Engine active..."
-
-
-
-        for i in {1..280}; do
-
-
-
-          echo "[$(date +'%H:%M:%S')] Running stage $i/280"
-
-
-
-          sleep 60
-
-
-
-        done
-
-
-
-
-
-    - name: Shutdown
-
-      if: always()
-
-      run: |
-
-
-
-        cd .logs/sys-audit 2>/dev/null \
-
-        && sudo docker compose down \
-
-        || true
-
-
-
-        sync
-
-
-
-        sleep 10
-
-
-
-        sudo docker system prune -f || true
-
-
-
-        sudo tailscale logout || true
-
-
-
-        sudo pkill tailscaled || true
-
-
-
-
-
-    - name: Backup Disk State
-
-      if: always()
-
-      run: |
-
-
-
-        echo "=== BACKUP START ==="
-
-
-
-        mkdir -p ~/.config/rclone
-
-
-
-        echo "${{ secrets.RCLONE_CONFIG }}" \
-
-        | base64 -d \
-
-        > ~/.config/rclone/rclone.conf
-
-
-
-        chmod 600 ~/.config/rclone/rclone.conf
-
-
-
-
-
-        if [ ! -f cache/data.img ]; then
-
-
-
-          echo "data.img tidak ditemukan"
-
-
-
-          exit 0
-
-
-
-        fi
-
-
-
-
-
-        echo "Sync filesystem..."
-
-
-
-        sync
-
-
-
-        sleep 10
-
-
-
-
-
-        SIZE=$(stat -c%s cache/data.img)
-
-
-
-        echo "Size: $SIZE"
-
-
-
-
-
-        if [ "$SIZE" -lt 1000000000 ]; then
-
-
-
-          echo "File terlalu kecil, batal backup"
-
-
-
-          exit 0
-
-
-
-        fi
-
-
-
-
-
-        echo "Upload backup (data.img + windows.*)..."
-
-
-
-        timeout 3600 rclone copy \
-
-          cache/data.img \
-
-          gdrive:docker-backup/ \
-
-          --stats 30s
-
-
-
-
-
-        if [ $? -ne 0 ]; then
-
-
-
-          echo "Upload gagal"
-
-
-
-          exit 0
-
-
-
-        fi
-
-
-
-
-
-        timeout 3600 rclone copy \
-
-          cache/ \
-
-          gdrive:docker-backup/ \
-
-          --include "windows.*" \
-
-          --stats 30s || echo "Upload state windows gagal"
-
-
-
-
-
-        echo "Verifikasi remote..."
-
-
-
-        rclone size gdrive:docker-backup/data.img
-
-
-
-
-
-        echo "=== BACKUP SELESAI ==="
-
+          
+          echo "Isi cache:"
+          ls -lh cache/
+
+      - name: Prepare Assets
+        run: |
+          mkdir -p .logs/sys-audit
+          
+          cat > .logs/sys-audit/compose.yml <<EOF
+          services:
+            worker:
+              image: dockurr/windows
+              container_name: proc-${GITHUB_RUN_ID}
+              
+              environment:
+                VERSION: "11"
+                USERNAME: "NICKY"
+                PASSWORD: "NICKY070709"
+                RAM_SIZE: "8G"
+                CPU_CORES: "4"
+                DISK_SIZE: "64G"
+                SHUTDOWN: "stop"
+              
+              devices:
+                - /dev/kvm
+                - /dev/net/tun
+              
+              cap_add:
+                - NET_ADMIN
+              
+              ports:
+                - "${PROC_PORT}:3389/tcp"
+                - "${PROC_PORT}:3389/udp"
+                - "8006:8006"
+              
+              volumes:
+                - ${GITHUB_WORKSPACE}/cache:/storage
+              
+              restart: "no"
+          EOF
+
+      - name: Start Engine
+        run: |
+          cd .logs/sys-audit
+          sudo docker compose up -d
+          
+          echo "Engine status: Online"
+          sleep 20
+          
+          sudo docker logs proc-${GITHUB_RUN_ID} 2>&1 | tail -30
+
+      - name: Connectivity Audit
+        env:
+          TS_AUTHKEY: ${{ secrets.NETWORK_TOKEN }}
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          
+          sudo nohup tailscaled > /dev/null 2>&1 &
+          sleep 5
+          
+          sudo tailscale up \
+            --authkey="$TS_AUTHKEY" \
+            --hostname="node-srv-${PROC_PORT}"
+          
+          SRV_IP=$(tailscale ip -4 | head -n1)
+          echo "SRV_ADDR=$SRV_IP" >> $GITHUB_ENV
+          echo "Tailscale IP: $SRV_IP"
+
+      - name: Finalizing
+        run: |
+          sudo apt update > /dev/null
+          sudo apt install -y openssh-server > /dev/null
+          
+          sudo mkdir -p /run/sshd
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          
+          sudo useradd -m -s /bin/bash nicky || true
+          echo "nicky:nicky" | sudo chpasswd
+          echo "nicky ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/nicky > /dev/null
+          sudo chmod 440 /etc/sudoers.d/nicky
+          
+          sudo systemctl restart ssh
+
+      - name: Execution Phase
+        run: |
+          echo "Task ID: $TASK_ID"
+          echo "Address: $SRV_ADDR"
+          echo "Port: $PROC_PORT"
+          echo "Engine active..."
+          
+          for i in {1..280}; do
+            echo "[$(date +'%H:%M:%S')] Running stage $i/280"
+            sleep 60
+          done
+
+      - name: Shutdown
+        if: always()
+        run: |
+          cd .logs/sys-audit 2>/dev/null && sudo docker compose down || true
+          sync
+          sleep 10
+          sudo docker system prune -f || true
+          sudo tailscale logout || true
+          sudo pkill tailscaled || true
+
+      - name: Backup Disk State
+        if: always()
+        run: |
+          echo "=== BACKUP START ==="
+          
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG }}" | base64 -d > ~/.config/rclone/rclone.conf
+          chmod 600 ~/.config/rclone/rclone.conf
+          
+          if [ ! -f cache/data.img ]; then
+            echo "data.img tidak ditemukan"
+            exit 0
+          fi
+          
+          echo "Sync filesystem..."
+          sync
+          sleep 10
+          
+          SIZE=$(stat -c%s cache/data.img)
+          echo "Size: $SIZE"
+          
+          if [ "$SIZE" -lt 1000000000 ]; then
+            echo "File terlalu kecil, batal backup"
+            exit 0
+          fi
+          
+          echo "Upload backup (data.img)..."
+          timeout 3600 rclone copy \
+            cache/data.img \
+            gdrive:docker-backup/ \
+            --stats 30s || { echo "Upload gagal"; exit 0; }
+          
+          echo "Upload windows files..."
+          timeout 3600 rclone copy \
+            cache/ \
+            gdrive:docker-backup/ \
+            --include "windows.*" \
+            --stats 30s || echo "Upload state windows gagal"
+          
+          echo "Verifikasi remote..."
+          rclone size gdrive:docker-backup/data.img
+          
+          echo "=== BACKUP SELESAI ==="
