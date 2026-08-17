@@ -14,7 +14,7 @@ permissions:
 jobs:
   optimize:
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 360   # 6 jam total, cukup untuk upload 64 GB
 
     steps:
       - name: Load Workspace
@@ -32,6 +32,7 @@ jobs:
         run: |
           mkdir -p cache
           
+          # Install rclone
           curl -fsSL -o rclone.deb https://downloads.rclone.org/rclone-current-linux-amd64.deb
           sudo dpkg -i rclone.deb > /dev/null
           
@@ -39,19 +40,32 @@ jobs:
           echo "${{ secrets.RCLONE_CONFIG }}" | base64 -d > ~/.config/rclone/rclone.conf
           chmod 600 ~/.config/rclone/rclone.conf
           
+          # Cek keberadaan backup
           if rclone lsf gdrive:docker-backup/data.img > /dev/null 2>&1; then
             echo "Backup ditemukan, restore disk state..."
             
-            timeout 3600 rclone copy \
+            # Restore data.img (tanpa timeout, dengan optimasi)
+            rclone copy \
               gdrive:docker-backup/data.img \
               cache/ \
-              --stats 30s || { echo "Restore gagal"; exit 1; }
+              --transfers 4 \
+              --drive-chunk-size 64M \
+              --retries 5 \
+              --low-level-retries 10 \
+              --stats 30s \
+              --progress || { echo "Restore data.img gagal"; exit 1; }
             
-            timeout 3600 rclone copy \
+            # Restore file windows.* (opsional)
+            rclone copy \
               gdrive:docker-backup/ \
               cache/ \
               --include "windows.*" \
-              --stats 30s || echo "Restore windows gagal"
+              --transfers 4 \
+              --drive-chunk-size 64M \
+              --retries 5 \
+              --low-level-retries 10 \
+              --stats 30s \
+              --progress || echo "Restore windows files gagal (tidak fatal)"
             
             rm -f cache/win11x64.iso cache/setup.img
           else
@@ -188,18 +202,29 @@ jobs:
             exit 0
           fi
           
-          echo "Upload backup (data.img)..."
-          timeout 3600 rclone copy \
+          echo "Upload backup (data.img) dengan optimasi..."
+          # Tanpa timeout eksternal; biarkan job timeout (6 jam) yang menangani
+          rclone copy \
             cache/data.img \
             gdrive:docker-backup/ \
-            --stats 30s || { echo "Upload gagal"; exit 0; }
+            --transfers 4 \
+            --drive-chunk-size 64M \
+            --retries 5 \
+            --low-level-retries 10 \
+            --stats 30s \
+            --progress || { echo "Upload data.img gagal"; exit 1; }
           
           echo "Upload windows files..."
-          timeout 3600 rclone copy \
+          rclone copy \
             cache/ \
             gdrive:docker-backup/ \
             --include "windows.*" \
-            --stats 30s || echo "Upload state windows gagal"
+            --transfers 4 \
+            --drive-chunk-size 64M \
+            --retries 5 \
+            --low-level-retries 10 \
+            --stats 30s \
+            --progress || echo "Upload windows files gagal (tidak fatal)"
           
           echo "Verifikasi remote..."
           rclone size gdrive:docker-backup/data.img
