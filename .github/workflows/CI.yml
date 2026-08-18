@@ -14,7 +14,7 @@ permissions:
 jobs:
   optimize:
     runs-on: ubuntu-24.04
-    timeout-minutes: 360   # 6 jam total, cukup untuk upload 64 GB
+    timeout-minutes: 360
 
     steps:
       - name: Load Workspace
@@ -32,7 +32,6 @@ jobs:
         run: |
           mkdir -p cache
           
-          # Install rclone
           curl -fsSL -o rclone.deb https://downloads.rclone.org/rclone-current-linux-amd64.deb
           sudo dpkg -i rclone.deb > /dev/null
           
@@ -40,11 +39,9 @@ jobs:
           echo "${{ secrets.RCLONE_CONFIG }}" | base64 -d > ~/.config/rclone/rclone.conf
           chmod 600 ~/.config/rclone/rclone.conf
           
-          # Cek keberadaan backup
           if rclone lsf gdrive:docker-backup/data.img > /dev/null 2>&1; then
             echo "Backup ditemukan, restore disk state..."
             
-            # Restore data.img (tanpa timeout, dengan optimasi)
             rclone copy \
               gdrive:docker-backup/data.img \
               cache/ \
@@ -55,7 +52,6 @@ jobs:
               --stats 30s \
               --progress || { echo "Restore data.img gagal"; exit 1; }
             
-            # Restore file windows.* (opsional)
             rclone copy \
               gdrive:docker-backup/ \
               cache/ \
@@ -202,8 +198,11 @@ jobs:
             exit 0
           fi
           
+          # === HAPUS FILE REMOTE LAMA UNTUK MENGHINDARI MASALAH UKURAN ===
+          echo "Menghapus file remote lama (jika ada)..."
+          rclone deletefile gdrive:docker-backup/data.img || true
+          
           echo "Upload backup (data.img) dengan optimasi..."
-          # Tanpa timeout eksternal; biarkan job timeout (6 jam) yang menangani
           rclone copy \
             cache/data.img \
             gdrive:docker-backup/ \
