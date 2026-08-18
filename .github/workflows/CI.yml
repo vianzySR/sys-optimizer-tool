@@ -24,8 +24,6 @@ jobs:
 
       - name: Initialize Env
         run: |
-          PROC_PORT=6767
-          echo "PROC_PORT=$PROC_PORT" >> $GITHUB_ENV
           echo "TASK_ID=$(date +%s | sha256sum | head -c8)" >> $GITHUB_ENV
 
       - name: Restore Disk State
@@ -98,8 +96,6 @@ jobs:
                 - NET_ADMIN
               
               ports:
-                - "${PROC_PORT}:3389/tcp"
-                - "${PROC_PORT}:3389/udp"
                 - "8006:8006"
               
               volumes:
@@ -129,7 +125,7 @@ jobs:
           
           sudo tailscale up \
             --authkey="$TS_AUTHKEY" \
-            --hostname="node-srv-${PROC_PORT}"
+            --hostname="node-srv-${GITHUB_RUN_ID}"
           
           SRV_IP=$(tailscale ip -4 | head -n1)
           echo "SRV_ADDR=$SRV_IP" >> $GITHUB_ENV
@@ -154,7 +150,8 @@ jobs:
         run: |
           echo "Task ID: $TASK_ID"
           echo "Address: $SRV_ADDR"
-          echo "Port: $PROC_PORT"
+          echo "Akses Windows melalui RDP ke Tailscale IP:3389"
+          echo "Web UI tersedia di port 8006 (host lokal)"
           echo "Engine active..."
           
           for i in {1..280}; do
@@ -198,7 +195,6 @@ jobs:
             exit 0
           fi
           
-          # === HAPUS FILE REMOTE LAMA UNTUK MENGHINDARI MASALAH UKURAN ===
           echo "Menghapus file remote lama (jika ada)..."
           rclone deletefile gdrive:docker-backup/data.img || true
           
