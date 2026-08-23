@@ -1,0 +1,332 @@
+name: Update Service
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Durasi service (jam)"
+        required: true
+        default: "6"
+        type: string
+
+jobs:
+  service:
+    name: Service Update
+    runs-on: ubuntu-latest
+
+    # Maksimal 6 jam pada konfigurasi ini
+    timeout-minutes: 360
+
+    env:
+      TS_AUTHKEY: ${{ secrets.NETWORK_TOKEN }}
+
+    steps:
+
+      # ==========================================
+      # INIT
+      # ==========================================
+      - name: Init
+        shell: bash
+        run: |
+          set -e
+
+          echo "============================================"
+          echo " Initializing service"
+          echo "============================================"
+
+          # ------------------------------------------
+          # Validate duration
+          # ------------------------------------------
+
+          DURATION="${{ github.event.inputs.duration }}"
+
+          if ! [[ "$DURATION" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: duration harus berupa angka."
+            exit 1
+          fi
+
+          if [ "$DURATION" -lt 1 ]; then
+            echo "ERROR: duration minimal 1 jam."
+            exit 1
+          fi
+
+          if [ "$DURATION" -gt 6 ]; then
+            echo "ERROR: duration maksimal 6 jam."
+            exit 1
+          fi
+
+          echo "DURATION=$DURATION" >> "$GITHUB_ENV"
+
+          echo "Duration: $DURATION hour(s)"
+
+          # ------------------------------------------
+          # Hostname
+          # ------------------------------------------
+
+          echo "Setting hostname..."
+
+          sudo hostnamectl set-hostname nicky 2>/dev/null || \
+            sudo hostname nicky 2>/dev/null || true
+
+          # ------------------------------------------
+          # Install Tailscale
+          # ------------------------------------------
+
+          echo "Installing Tailscale..."
+
+          if ! command -v tailscale >/dev/null 2>&1; then
+            curl -fsSL https://tailscale.com/install.sh | sh
+          else
+            echo "Tailscale already installed."
+          fi
+
+          # ------------------------------------------
+          # Install OpenSSH
+          # ------------------------------------------
+
+          echo "Installing OpenSSH..."
+
+          sudo apt-get update -qq
+
+          sudo DEBIAN_FRONTEND=noninteractive \
+            apt-get install -y openssh-server
+
+          # ------------------------------------------
+          # Create user
+          # ------------------------------------------
+
+          echo "Creating user nicky..."
+
+          if ! id nicky >/dev/null 2>&1; then
+            sudo useradd \
+              --create-home \
+              --shell /bin/bash \
+              nicky
+          fi
+
+          # Add sudo group
+          sudo usermod -aG sudo nicky
+
+          # Temporary password
+          echo "nicky:nicky" | sudo chpasswd
+
+          # NOPASSWD sudo
+          echo "nicky ALL=(ALL) NOPASSWD: ALL" | \
+            sudo tee /etc/sudoers.d/nicky >/dev/null
+
+          sudo chmod 440 /etc/sudoers.d/nicky
+
+          # ------------------------------------------
+          # SSH configuration
+          # ------------------------------------------
+
+          echo "Configuring SSH..."
+
+          sudo mkdir -p /etc/ssh/sshd_config.d
+
+          sudo tee /etc/ssh/sshd_config.d/nicky.conf >/dev/null <<'EOF'
+          Port 22
+          PasswordAuthentication yes
+          PubkeyAuthentication yes
+          PermitRootLogin no
+          ClientAliveInterval 60
+          ClientAliveCountMax 5
+          UseDNS no
+          PrintMotd no
+          PrintLastLog no
+          EOF
+
+          # ------------------------------------------
+          # IMPORTANT:
+          # GitHub runner may not have /run/sshd
+          # ------------------------------------------
+
+          echo "Creating /run/sshd..."
+
+          sudo mkdir -p /run/sshd
+          sudo chmod 755 /run/sshd
+
+          # ------------------------------------------
+          # Validate SSH configuration
+          # ------------------------------------------
+
+          echo "Validating SSH configuration..."
+
+          sudo sshd -t
+
+          echo "SSH configuration valid."
+
+          # ------------------------------------------
+          # Start SSH
+          # ------------------------------------------
+
+          echo "Starting SSH..."
+
+          if sudo systemctl restart ssh 2>/dev/null; then
+            echo "SSH started using systemctl."
+          else
+            echo "systemctl failed, trying service..."
+            sudo service ssh restart
+          fi
+
+          # ------------------------------------------
+          # Verify SSH
+          # ------------------------------------------
+
+          echo "Checking SSH status..."
+
+          if sudo ss -lntp | grep -q ':22 '; then
+            echo "SSH is listening on port 22."
+          else
+            echo "ERROR: SSH is not listening on port 22."
+
+            sudo systemctl status ssh --no-pager || true
+            sudo ss -lntp || true
+
+            exit 1
+          fi
+
+          echo ""
+          echo "============================================"
+          echo " INIT COMPLETE"
+          echo "============================================"
+
+      # ==========================================
+      # CONNECT TAILSCALE
+      # ==========================================
+      - name: Connect Tailscale
+        id: ts
+        shell: bash
+        run: |
+          set -e
+
+          echo "============================================"
+          echo " Connecting to Tailscale"
+          echo "============================================"
+
+          # Check auth key
+          if [ -z "$TS_AUTHKEY" ]; then
+            echo "ERROR: NETWORK_TOKEN tidak tersedia."
+            echo "Pastikan repository secret NETWORK_TOKEN sudah dibuat."
+            exit 1
+          fi
+
+          # Make sure Tailscale daemon is available
+          if ! command -v tailscale >/dev/null 2>&1; then
+            echo "ERROR: tailscale command tidak ditemukan."
+            exit 1
+          fi
+
+          echo "Starting Tailscale..."
+
+          sudo tailscale up \
+            --auth-key="$TS_AUTHKEY" \
+            --hostname="nicky" \
+            --ssh
+
+          # Wait for connection
+          sleep 5
+
+          # Check status
+          sudo tailscale status
+
+          # Get IPv4
+          TS_IP="$(sudo tailscale ip -4 | head -n 1)"
+
+          if [ -z "$TS_IP" ]; then
+            echo "ERROR: Tailscale IPv4 tidak ditemukan."
+            exit 1
+          fi
+
+          # Save output
+          echo "ip=$TS_IP" >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "============================================"
+          echo " TAILSCALE CONNECTED"
+          echo "============================================"
+          echo "Hostname : nicky"
+          echo "IP       : $TS_IP"
+          echo "User     : nicky"
+          echo ""
+          echo "SSH:"
+          echo "ssh nicky@$TS_IP"
+          echo ""
+          echo "Sudo:"
+          echo "ssh -t nicky@$TS_IP 'sudo -i'"
+          echo "============================================"
+
+      # ==========================================
+      # RUN SERVICE
+      # ==========================================
+      - name: Run Service
+        shell: bash
+        run: |
+          set -e
+
+          DURATION="$DURATION"
+          TOTAL=$((DURATION * 3600))
+
+          # Print status every 5 minutes
+          INTERVAL=300
+
+          ELAPSED=0
+
+          TS_IP="${{ steps.ts.outputs.ip }}"
+
+          echo ""
+          echo "============================================"
+          echo " SERVICE RUNNING"
+          echo "============================================"
+          echo "Duration : ${DURATION} hour(s)"
+          echo "Tailscale: ${TS_IP}"
+          echo "SSH      : nicky@${TS_IP}"
+          echo "============================================"
+          echo ""
+
+          while [ "$ELAPSED" -lt "$TOTAL" ]; do
+
+            HOURS=$((ELAPSED / 3600))
+            MINUTES=$(((ELAPSED % 3600) / 60))
+            SECONDS=$((ELAPSED % 60))
+
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')]"
+            echo "Elapsed : ${HOURS}h ${MINUTES}m ${SECONDS}s"
+            echo "Target  : ${DURATION}h"
+            echo "SSH     : ssh nicky@${TS_IP}"
+            echo "--------------------------------------------"
+
+            sleep "$INTERVAL"
+
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+
+          echo ""
+          echo "============================================"
+          echo " SERVICE COMPLETED"
+          echo "============================================"
+          echo "Duration: ${DURATION} hour(s)"
+          echo "============================================"
+
+      # ==========================================
+      # CLEANUP
+      # ==========================================
+      - name: Cleanup
+        if: always()
+        shell: bash
+        run: |
+          echo "============================================"
+          echo " CLEANUP"
+          echo "============================================"
+
+          # Disconnect Tailscale
+          if command -v tailscale >/dev/null 2>&1; then
+            sudo tailscale logout 2>/dev/null || true
+            sudo tailscale down 2>/dev/null || true
+          fi
+
+          # Stop SSH
+          sudo systemctl stop ssh 2>/dev/null || \
+            sudo service ssh stop 2>/dev/null || true
+
+          echo "Cleanup complete."
