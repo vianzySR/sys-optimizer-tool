@@ -43,8 +43,8 @@ fetch_base_image() {
 
     if [ ! -f "$img_path" ]; then
         local urls=(
-            "https://cdimage.kali.org/current/kali-linux-2026.2-qemu-amd64.7z"
-            "https://kali.download/base-images/current/kali-linux-2026.2-qemu-amd64.7z"
+            "https://cdimage.kali.org/current/kali-linux-2026.3-qemu-amd64.7z"
+            "https://kali.download/base-images/current/kali-linux-2026.3-qemu-amd64.7z"
         )
         for url in "${urls[@]}"; do
             wget -q -O "$img_path" "$url" 2>/dev/null && break
